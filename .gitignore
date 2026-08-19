@@ -1,0 +1,13 @@
+# nix build outputs
+result
+result-*
+
+# direnv
+.direnv/
+
+# rendered artifacts (regenerate from the .md)
+*.pdf
+
+# real secrets never live in this repo (they belong in /var/lib/*/env);
+# only the *.env.example templates are tracked
+secrets/*.env
