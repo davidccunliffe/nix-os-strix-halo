@@ -18,9 +18,10 @@
   users.users.david = {
     isNormalUser = true;
     extraGroups = [ "wheel" "video" "render" ];
-    # Replace with your key. Password auth is disabled below.
+    # Password auth is disabled below; this key is "macbook-personal"
+    # from 1Password.
     openssh.authorizedKeys.keys = [
-      "ssh-ed25519 AAAA... david@mac"
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKU06G//LXXxju8FgP15WA7JBqfV07JCgIneei01tyS5 david@macbook-personal"
     ];
   };
 

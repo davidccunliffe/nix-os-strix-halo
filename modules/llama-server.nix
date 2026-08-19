@@ -15,7 +15,10 @@ let
   llamaPkg = pkgs.llama-cpp.override { vulkanSupport = true; };
 
   # ---- Edit per model ----
-  modelFile  = "/var/lib/llama/models/CHANGE-ME.gguf";
+  # Download onto the box with:
+  #   sudo -u llama curl -L -o /var/lib/llama/models/GLM-4.7-Flash-Q8_0.gguf \
+  #     https://huggingface.co/ggml-org/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-Q8_0.gguf
+  modelFile  = "/var/lib/llama/models/GLM-4.7-Flash-Q8_0.gguf";
   modelAlias = "local-main";   # must match settings.model.default in hermes.nix
   port       = 8000;
 
