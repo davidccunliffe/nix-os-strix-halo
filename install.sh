@@ -99,6 +99,16 @@ PSK_KEY="$(grep -oP 'pskRaw\s*=\s*"ext:\K[^"]+' "$REPO/configuration.nix" | head
 [[ -n "$WIFI_SECRETS" ]] || die "could not read networking.wireless.secretsFile from configuration.nix"
 [[ -n "$PSK_KEY" ]]      || die "could not read the pskRaw ext: key name from configuration.nix"
 
+# This script writes the secrets file as root:root 0600, because the ISO has
+# no wpa_supplicant user to hand it to. The hardened unit runs as that user
+# and opens the file *after* dropping privileges, so root:root 0600 is
+# unreadable to it and the box boots with no lease. What closes the gap is
+# the systemd.tmpfiles rule in configuration.nix, which relaxes the file to
+# root:wpa_supplicant 0640 before the supplicant starts. Without that rule
+# this install produces a headless box, so refuse to start.
+grep -qF "z $WIFI_SECRETS 0640 root wpa_supplicant" "$REPO/configuration.nix" \
+  || die "configuration.nix has no tmpfiles rule making $WIFI_SECRETS readable by wpa_supplicant — the installed box would come up without Wi-Fi"
+
 # configuration.nix pins one interface by name. If the installed kernel calls
 # the card something else there is no Wi-Fi and no way in — catch it now,
 # while there is still a working network to fix it over.
@@ -323,6 +333,9 @@ ok "copied into the repo and staged"
 
 # ---------------------------------------------------------------- secrets --
 step "Writing secrets under /mnt"
+# Written root:root 0600: the ISO has no wpa_supplicant user to own it.
+# The tmpfiles rule checked for in the preflight above relaxes it to
+# root:wpa_supplicant 0640 at first boot, before the supplicant starts.
 install -d -m 0700 "/mnt$(dirname "$WIFI_SECRETS")"
 printf '%s=%s\n' "$PSK_KEY" "$PSK" > "/mnt$WIFI_SECRETS"
 chmod 0600 "/mnt$WIFI_SECRETS"

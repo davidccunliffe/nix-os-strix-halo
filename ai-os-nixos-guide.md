@@ -151,13 +151,22 @@ Before the first rebuild, edit two placeholders:
 
 ## 3. Secrets and the model
 
-Three env files, all root-owned and 0600. The Wi-Fi one must exist before the first headless boot (no file, no network); the llama-server one must exist before its service starts; the Hermes one can be created right after the first rebuild (the service crash-loops harmlessly until the file exists, then a restart fixes it).
+Three env files, all root-owned: the llama and Hermes ones 0600, the Wi-Fi one 0640 with group `wpa_supplicant` (see below — the supplicant reads it as an unprivileged user, the other two are read by systemd as root). The Wi-Fi one must exist before the first headless boot (no file, no network); the llama-server one must exist before its service starts; the Hermes one can be created right after the first rebuild (the service crash-loops harmlessly until the file exists, then a restart fixes it).
 
 ```bash
-# Wi-Fi passphrase for FoxyAP (during nixos-install, prefix the paths
-# with /mnt so the installed system boots straight onto the network):
-sudo install -d -m 0700 /var/lib/wifi
-echo 'psk_foxyap=the-passphrase' | sudo install -m 0600 /dev/stdin /var/lib/wifi/env
+# Wi-Fi passphrase for FoxyAP. The wpa_supplicant unit is hardened and
+# runs as User=wpa_supplicant, opening this file after it drops
+# privileges — so root:root 0600 gives "EXT PW FILE: could not open
+# file ... Permission denied" and no network. Group-read for
+# wpa_supplicant is what makes it work:
+sudo install -d -m 0750 -g wpa_supplicant /var/lib/wifi
+echo 'psk_foxyap=the-passphrase' \
+  | sudo install -m 0640 -g wpa_supplicant /dev/stdin /var/lib/wifi/env
+
+# During nixos-install, prefix the paths with /mnt so the installed system
+# boots straight onto the network — and drop the -g, since the ISO has no
+# wpa_supplicant user. The systemd.tmpfiles rule in configuration.nix
+# corrects the ownership on first boot, before the supplicant starts.
 
 # llama-server API key (invent one, keep it long):
 sudo install -d -m 0750 -o llama -g llama /var/lib/llama

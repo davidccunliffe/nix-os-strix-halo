@@ -17,6 +17,27 @@
     networks."FoxyAP".pskRaw = "ext:psk_foxyap";
   };
 
+  # The secrets file has to be readable by the *service*, not just by root.
+  # The NixOS unit is hardened and runs as User=wpa_supplicant, and the
+  # ext_password file backend opens the file after that privilege drop —
+  # unlike systemd's own EnvironmentFile=, which is read as root beforehand.
+  # A root:root 0600 file therefore fails, and fails quietly as far as the
+  # console is concerned:
+  #
+  #   EXT PW FILE: could not open file '/var/lib/wifi/env': Permission denied
+  #   wlp195s0: EXT PW: No PSK found from external storage
+  #
+  # leaving the box headless with no lease. Group-read for wpa_supplicant is
+  # the narrowest fix that works. Enforced here rather than left to whoever
+  # created the file: systemd-tmpfiles-setup.service is ordered before the
+  # supplicant, so it is corrected on every boot — including the first one
+  # after nixos-install, where the installer cannot set the ownership itself
+  # because the user does not exist on the ISO.
+  systemd.tmpfiles.rules = [
+    "d /var/lib/wifi 0750 root wpa_supplicant -"
+    "z /var/lib/wifi/env 0640 root wpa_supplicant -"
+  ];
+
   # Bootloader lives here on purpose: nixos-generate-config does not emit
   # loader settings, so keeping them out of hardware-configuration.nix
   # means that file can be replaced wholesale without losing boot config.

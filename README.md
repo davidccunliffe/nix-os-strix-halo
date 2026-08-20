@@ -172,6 +172,8 @@ commands in guide §3):
 
 ```
 /var/lib/wifi/env     psk_foxyap=...          Wi-Fi passphrase; needed at first boot or the box is headless and offline
+                                              must be 0640 root:wpa_supplicant — the supplicant reads it as an
+                                              unprivileged user; configuration.nix enforces this via systemd.tmpfiles
 /var/lib/llama/env    LLAMA_API_KEY=...
 /var/lib/hermes/env   OPENAI_API_KEY=...      same value as above
                       DISCORD_BOT_TOKEN=...   optional, see guide §6

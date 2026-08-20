@@ -117,6 +117,26 @@ else
   fail "$UNIT is $(systemctl is-active "$UNIT" 2>&1) — see the journal below"
 fi
 
+# 3b. Let a link that is still coming up finish before judging it. Measured
+#     on this box after a supplicant restart: ~5s to associate, ~10s before
+#     dhcpcd has the lease and the routes back. A plain report run inside
+#     that window says "not associated" and "no IPv4 address" about a link
+#     that is merely mid-negotiation, and reads identically to real
+#     breakage — while `ip a` a few seconds later shows everything up.
+#     Only waits when something is actually missing, and says how long it
+#     waited, so a genuinely dead link still fails, 20s later.
+if systemctl is-active --quiet "$UNIT"; then
+  WAITED=0
+  while [[ $WAITED -lt 20 ]]; do
+    [[ "$(cat "/sys/class/net/$IFACE/carrier" 2>/dev/null || echo 0)" == "1" ]] \
+      && [[ -n "$(ip -4 -br addr show "$IFACE" 2>/dev/null | awk '{print $3}')" ]] \
+      && break
+    sleep 2
+    WAITED=$((WAITED + 2))
+  done
+  [[ $WAITED -gt 0 ]] && note "waited ${WAITED}s for the link to settle"
+fi
+
 # 4. associated. Without `iw`, carrier is the honest proxy: for a wireless
 #    interface the kernel only raises it once the link is actually up.
 CARRIER="$(cat "/sys/class/net/$IFACE/carrier" 2>/dev/null || echo 0)"
@@ -176,6 +196,24 @@ dmesg 2>/dev/null | grep -iE "mt79|cfg80211|ieee80211|$IFACE|wlan[0-9]" | tail -
 head1 "Secrets file"
 if [[ -f "$SECRETS" ]]; then
   note "$SECRETS  $(stat -c '%a %U:%G' "$SECRETS")"
+  # Mode and owner are not the question — "can the process that needs it
+  # actually open it" is. The unit is hardened and runs as an unprivileged
+  # user (User=wpa_supplicant), and the ext_password file backend opens this
+  # file after that drop, so a root:root 0600 file silently yields no PSK.
+  # Ask the unit who it runs as rather than assuming, and then test as them.
+  SVC_USER="$(systemctl show -p User --value "$UNIT" 2>/dev/null)"
+  SVC_USER="${SVC_USER:-root}"
+  SVC_GROUP="$(systemctl show -p Group --value "$UNIT" 2>/dev/null)"
+  SVC_GROUP="${SVC_GROUP:-$SVC_USER}"
+  if sudo -u "$SVC_USER" test -r "$SECRETS" 2>/dev/null; then
+    pass "readable by '$SVC_USER', the user $UNIT runs as"
+  else
+    fail "$SECRETS is not readable by '$SVC_USER' — the user $UNIT runs as"
+    note "fix now:  sudo chgrp $SVC_GROUP $SECRETS && sudo chmod 0640 $SECRETS"
+    note "          sudo chmod 0750 $(dirname "$SECRETS") && sudo chgrp $SVC_GROUP $(dirname "$SECRETS")"
+    note "then:     ./wifi-diag.sh --restart"
+    note "make it stick: the systemd.tmpfiles.rules block in configuration.nix"
+  fi
   if [[ -n "$PSK_KEY" ]]; then
     if grep -q "^${PSK_KEY}=" "$SECRETS"; then
       # Never print the value. Length and shape are what actually go wrong.
@@ -214,6 +252,13 @@ else
     "4-way handshake failed" / "WRONG_KEY"
         the passphrase in $SECRETS is wrong. Edit it and
         re-run this script with --restart. No rebuild needed.
+
+    "EXT PW FILE: could not open file ... Permission denied"
+        the file exists but the user wpa_supplicant runs as cannot
+        read it. See the secrets-file check above for the fix; the
+        durable one is the systemd.tmpfiles.rules block in
+        configuration.nix, which sets it 0640 root:wpa_supplicant on
+        every boot.
 
     "EXT PW: No PSK found from external storage"
         the '$PSK_KEY' line is missing or misnamed in that file.
