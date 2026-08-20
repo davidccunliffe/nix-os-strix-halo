@@ -114,8 +114,8 @@ let
   skill = ''
     ---
     name: claude-consult
-    description: Consult Claude Code for architecture decisions, design tradeoffs and plan review, when a frontier model is worth the cost.
-    version: 1.0.0
+    description: The only way to reach Claude Code on this box. Read-only consults for architecture decisions, design tradeoffs and plan review. Running `claude` directly does not work here.
+    version: 1.1.0
     license: MIT
     platforms: [linux]
     metadata:
@@ -130,6 +130,23 @@ let
     This box runs a local model for everything by default. `consult.sh` reaches
     a frontier model (Claude Code) instead. It costs real money from a personal
     subscription, so it is worth using well and worth not using casually.
+
+    ## Never run `claude` directly
+
+    You run as the `hermes` user, which has no Claude credentials and no
+    browser. `claude -p ...` fails with "Not logged in · Please run /login",
+    and no amount of `claude auth login` will fix it — that command needs an
+    interactive browser this service does not have. The credential lives in a
+    file only `consult.sh` reads, on purpose. `consult.sh` is the only route.
+
+    ## It cannot write code
+
+    This is a consult, not a delegation. It has Read, Grep and Glob and
+    nothing else, so it cannot create files, edit them or run commands. If
+    asked to have Claude *build* something, do not announce a delegation and
+    then fail. Either implement it yourself with the local model — which is
+    what this box is for — or consult first for a design and then implement
+    that design yourself.
 
     ## Call it
 

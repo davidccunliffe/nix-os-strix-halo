@@ -52,6 +52,18 @@
       };
 
       toolsets = [ "all" ];
+
+      # The bundled "claude-code" skill tells the agent to run `claude`
+      # directly and to authenticate by running it once for a browser login.
+      # Neither works here: the gateway runs as the unprivileged `hermes`
+      # user, which has no Claude credentials and no browser, so every
+      # delegation fails with "Not logged in · Please run /login" after the
+      # agent has already announced it is delegating. Worse, the obvious fix —
+      # putting CLAUDE_CODE_OAUTH_TOKEN in Hermes' environment — would also
+      # silently enable Hermes' own `anthropic` provider, which is the thing
+      # modules/claude-bridge.nix exists to avoid. Disabled so the agent finds
+      # the wrapper instead, which holds the credential correctly.
+      skills.disabled = [ "claude-code" ];
       terminal = {
         backend = "local";
         timeout = 180;
