@@ -356,6 +356,69 @@ The tunnel is not just caution. The backend binds `127.0.0.1` by default, any ot
 
 Claude Code as a second client of the same endpoint keeps working exactly as documented in your stack notes: `ANTHROPIC_BASE_URL` at the llama-server endpoint, attribution header disabled in settings.json, and mind the process-global URL scope.
 
+## 6c. Consulting Claude from Hermes
+
+Hermes runs on the local model for everything. When it hits a question worth a
+frontier model — an architecture decision, a design tradeoff, a plan worth a
+second opinion before implementing — `modules/claude-bridge.nix` lets it shell
+out to Claude Code:
+
+```bash
+/etc/claude-bridge/consult.sh "question, with context inline"
+/etc/claude-bridge/consult.sh -d /some/dir "question about that directory"
+```
+
+Read-only by construction: `--allowed-tools Read,Grep,Glob` and
+`--permission-mode plan`, so a consult cannot edit anything and cannot fight
+the local agent over the same files. Each call is a fresh session, so the
+question has to carry its own context — which is a feature for second
+opinions, since you get an unanchored view rather than agreement with whatever
+the local model already decided.
+
+Setup is one file, created by hand:
+
+```bash
+claude setup-token                        # subscription required; prints a long-lived token
+read -rsp 'token: ' T && echo
+printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$T" \
+  | sudo install -D -m 0640 -o root -g hermes /dev/stdin /var/lib/claude-bridge/env
+unset T
+```
+
+**Do not put that token in `/var/lib/hermes/env`.** Hermes' `anthropic`
+provider reads `CLAUDE_CODE_OAUTH_TOKEN` as one of three accepted key
+variables, so a token anywhere Hermes can see it silently turns the whole
+agent into a Claude client billed to the subscription — with nothing in the
+logs to say so. The wrapper reads the token itself and exports it only into
+the `claude` process, which keeps Claude Code as the thing using the
+credential. Anthropic's position is that subscription OAuth is for ordinary
+use of Claude Code and other native applications, and that third-party
+applications calling the API should authenticate with an API key.
+
+Ownership follows the same rule as everything else here: the reader decides.
+This file is read by the wrapper running as `hermes`, so it is
+`root:hermes 0640`, unlike `/var/lib/hermes/env`, which only activation reads
+and stays `root:root 0600`. A tmpfiles rule enforces both.
+
+Cost: consults spend the shared Pro/Max interactive limits — the same budget
+the status line's `5h` and `wk` figures track — not the separate Agent SDK
+credit. That is deliberate for occasional consults, and the wrong shape for
+anything autonomous: a Discord-triggered agent consulting on every message
+would eat the headroom you rely on for your own work. High-volume automation
+wants an API key and its own billing, or an Agent SDK application, which draws
+a separate monthly credit and leaves plan limits alone.
+
+When to consult, and when not to, lives in the skill itself
+(`skills/local/claude-consult/SKILL.md`, installed declaratively via
+`hermesHomeFiles`), because that guidance is for the agent rather than for
+you. Without it an agent either never reaches for the tool or reaches for it
+constantly, and constantly is expensive.
+
+One permission note: the `hermes` user cannot traverse `/home/david`, which is
+`0700`. So `-d /home/david/...` fails unless you widen that (`chmod 0711
+/home/david` lets others traverse without listing). Left alone on purpose —
+passing context in the question avoids the problem entirely.
+
 ## 7. ROCm A/B benchmarking
 
 The host stays Vulkan. When you want to re-check the ROCm side (the 7.x prefill regression on gfx1151 is exactly why you benchmark before committing):

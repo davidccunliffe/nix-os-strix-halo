@@ -31,6 +31,7 @@
         ./modules/llama-server.nix
         ./modules/hermes.nix
         ./modules/claude-code.nix
+        ./modules/claude-bridge.nix
 
         hermes-agent.nixosModules.default
 
