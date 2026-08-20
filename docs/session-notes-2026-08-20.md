@@ -360,10 +360,12 @@ SIGTERM.
 
 ### One more trap, found while iterating
 
-The module's env merge **appends**. A key written twice to
-`/var/lib/hermes/env` becomes two lines there and then grows in
-`$HERMES_HOME/.env` on every activation — this box reached three
-`DISCORD_BOT_TOKEN` lines and two `DISCORD_ALLOWED_USERS`. The parser takes
+Duplicate keys propagate through the merge. Appending the same key twice
+to `/var/lib/hermes/env` puts both lines into `$HERMES_HOME/.env` at the
+next activation — this box reached three `DISCORD_BOT_TOKEN` lines and two
+`DISCORD_ALLOWED_USERS` that way. Measured afterwards rather than assumed:
+the merge mirrors the source, it does not multiply it, so deduping the
+source and re-activating yields one line per key. The parser takes
 the last occurrence, so it keeps working while quietly accumulating, which
 is exactly the kind of thing that is baffling six months later. §6a now
 carries a dedupe recipe that keeps the last of each key.

@@ -108,6 +108,19 @@ let
       fi
     fi
 
+    # The two rate-limit windows are independent: the five-hour bucket is what
+    # stops you mid-afternoon, the weekly one is what stops you on Thursday.
+    # Seeing only the weekly figure tells you nothing about the wall you are
+    # about to hit in twenty minutes.
+    fh_raw=$(jqr '.rate_limits.five_hour.used_percentage // empty')
+    if [ -n "$fh_raw" ]; then
+      fh=$(printf '%.0f' "$fh_raw" 2>/dev/null)
+      if [ -n "$fh" ]; then
+        c=$(colour_for "$fh")
+        segments+=("''${DIM}5h ''${RESET}''${c}''${fh}%''${RESET}")
+      fi
+    fi
+
     # rate_limits is absent entirely on plans that do not report it, so this
     # segment has to disappear cleanly rather than render "wk n/a".
     wk_raw=$(jqr '.rate_limits.seven_day.used_percentage // empty')
