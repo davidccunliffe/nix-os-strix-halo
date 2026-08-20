@@ -14,18 +14,18 @@
   boot.extraModulePackages = [ ];
 
   fileSystems."/" =
-    { device = "/dev/disk/by-uuid/e704750b-a07d-4584-8b4a-12ce81cb6c45";
+    { device = "/dev/disk/by-uuid/8ecba12d-642f-43ec-9bb9-b35a52dee21b";
       fsType = "ext4";
     };
 
   fileSystems."/boot" =
-    { device = "/dev/disk/by-uuid/F4E4-278C";
+    { device = "/dev/disk/by-uuid/988F-0DE2";
       fsType = "vfat";
       options = [ "fmask=0077" "dmask=0077" ];
     };
 
   fileSystems."/var/lib/llama/models" =
-    { device = "/dev/disk/by-uuid/5e6c58d5-9f04-40d9-ab08-48a3cffbd6b5";
+    { device = "/dev/disk/by-uuid/97576a9c-fe01-4460-9b80-677c1e1edeb7";
       fsType = "ext4";
     };
 
