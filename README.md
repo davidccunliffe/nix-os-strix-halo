@@ -7,6 +7,7 @@ Full walkthrough (BIOS, install, secrets, verification, benchmarking, troublesho
 ## Layout
 
 ```
+install.sh                 bare-metal installer: disks, install, secrets, model
 flake.nix                  inputs: nixpkgs unstable, hermes-agent, (optional) nix-strix-halo
 flake.lock                 pinned inputs; committed
 configuration.nix          bootloader, user, SSH, firewall, podman
@@ -31,9 +32,91 @@ The model store is its own disk, so `modules/llama-server.nix` orders the
 unit against that mount (`RequiresMountsFor`). No swap anywhere — it would
 fight the GTT pool.
 
-## Quickstart
+## Quickstart — bare metal to working agent
 
-Day-to-day, from a checkout on the box:
+From the NixOS **minimal ISO**, booted in UEFI mode. Roughly an hour, most
+of it the build and the model download.
+
+### 1. Get the installer online
+
+The minimal ISO ships NetworkManager. Do **not** hand-run `wpa_supplicant`
+— it fights NetworkManager for the interface and leaves you associated but
+with no lease. Two commands:
+
+```bash
+sudo nmcli device wifi connect "YOUR_SSID" password "your-passphrase"
+ping -c3 nixos.org
+```
+
+`nmcli device wifi list` to scan. A temporary ethernet cable also works and
+needs no configuration.
+
+### 2. Set the BIOS
+
+Reboot into firmware and set the **iGPU / UMA frame buffer to 512 MB – 4 GB**.
+Not larger. This box shipped at 96 GiB, which leaves the host 31 GiB and
+silently starves everything — see the BIOS section below. Also: IOMMU on,
+Secure Boot off.
+
+Easier now than after the install.
+
+### 3. Run the installer
+
+```bash
+git clone https://github.com/davidccunliffe/nix-os-strix-halo
+cd nix-os-strix-halo
+
+sudo ./install.sh --dry-run    # prints the plan, touches nothing
+sudo ./install.sh              # asks you to type DESTROY, then goes
+```
+
+**This wipes both NVMe drives, including any existing OS.** The dry run
+shows exactly what is on them first.
+
+It partitions both disks, generates and commits the real
+`hardware-configuration.nix`, writes the three secret files, runs
+`nixos-install`, **downloads the model**, copies this repo to
+`/home/david/` and fixes the EFI boot order.
+
+The model download happens *before* the reboot on purpose: llama-server
+and Hermes both come up working on first boot instead of crash-looping on
+a missing GGUF.
+
+### 4. Reboot
+
+Pull the USB. Then confirm the stack (details in guide §5):
+
+```bash
+free -h                                  # ~124 GiB — if ~31 GiB, step 2 was missed
+systemctl status llama-server hermes-agent
+hermes chat
+```
+
+### 5. Discord bot — optional, after the box is up
+
+Not covered by the script: it needs a bot token from the Discord Developer
+Portal, which only exists in a signed-in browser session. **A `discord.gg`
+invite link cannot add a bot** — you need an OAuth2 URL built from your own
+Application ID.
+
+Full walkthrough in **guide §6a**. The short version: create the app,
+enable **Message Content Intent** *and* **Server Members Intent** (skipping
+these is why a bot sits online and never replies), copy the token, invite
+via the OAuth2 URL, then:
+
+```bash
+sudo tee -a /var/lib/hermes/env >/dev/null <<'EOF'
+DISCORD_BOT_TOKEN=...
+DISCORD_ALLOWED_USERS=your-discord-user-id
+EOF
+sudo nixos-rebuild switch --flake .#ai-os
+```
+
+Remote access to the Hermes dashboard is off by default — guide §6b.
+
+## Day to day
+
+From the checkout on the box:
 
 ```bash
 sudo nixos-rebuild switch --flake .#ai-os

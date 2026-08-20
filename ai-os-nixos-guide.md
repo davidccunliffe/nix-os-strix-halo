@@ -55,6 +55,12 @@ To scan for SSIDs: `nmcli device wifi list`. The wireless interface on this mach
 
 Then install:
 
+**Most of this section is automated by `./install.sh`** (see the README
+quickstart) — it does the partitioning, install, secrets, model download
+and repo copy, with a `--dry-run` that prints the plan first. What follows
+is the same procedure by hand, and the reasoning behind each step. Read it
+if the script fails, or if the hardware differs.
+
 ```bash
 # Two disks: nvme0n1 becomes the OS, nvme1n1 becomes the model store.
 sgdisk --zap-all /dev/nvme0n1
@@ -167,13 +173,19 @@ echo 'OPENAI_API_KEY=change-me-long-random' | sudo install -m 0600 /dev/stdin /v
 
 These plain files are the bootstrap path the Hermes docs themselves suggest. The upgrade is sops-nix or agenix feeding `services.hermes-agent.environmentFiles`; since you already run YubiKey-gated age for the vault, age keys plus agenix would be the natural fit here. Do not ever move keys into `settings` or `environment` in the Nix files: anything in a Nix expression lands world-readable in /nix/store.
 
-Model download, as the llama user's directory:
+Model download. `install.sh` does this during the install, before the first
+reboot, so llama-server and Hermes come up working instead of crash-looping
+on a missing GGUF. By hand, on a running system:
 
 ```bash
-sudo -u llama mkdir -p /var/lib/llama/models
-# hf CLI, curl from Hugging Face, or scp from the Mac; then update
-# modelFile in modules/llama-server.nix to the real filename.
+sudo -u llama curl -fL -C - \
+  -o /var/lib/llama/models/GLM-4.7-Flash-Q8_0.gguf \
+  https://huggingface.co/ggml-org/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-Q8_0.gguf
 ```
+
+`-C -` resumes a partial file — worth having on a 32 GB download over
+Wi-Fi. The filename must match `modelFile` in `modules/llama-server.nix`;
+`install.sh` derives one from the other so they cannot drift.
 
 ## 4. First deploy
 
