@@ -63,6 +63,12 @@
 
   environment.systemPackages = with pkgs; [
     git
+    # Pushing this repo from the box needs credentials, and the installer
+    # ISO has none (and is tmpfs, so setting them up there is wasted).
+    # `gh auth login` once here, then `gh auth setup-git` routes git's
+    # HTTPS credentials through it. Note the personal vs work account
+    # split: check `gh auth status` before pushing.
+    gh
     vim
     btop
     distrobox
