@@ -38,6 +38,14 @@
     ];
   };
 
+  # Headless box reached only by key-authenticated SSH, so the key is
+  # already the strong factor and a sudo password adds little. It removes a
+  # specific lockout: no password is set for `david` in this repo (a hash
+  # here would be public and offline-crackable), so without this the first
+  # boot gives you a shell you cannot administer from. Set a console
+  # password with `passwd` for physical recovery — that is a separate path.
+  security.sudo.wheelNeedsPassword = false;
+
   services.openssh = {
     enable = true;
     settings = {
