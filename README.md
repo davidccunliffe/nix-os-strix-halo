@@ -8,6 +8,7 @@ Full walkthrough (BIOS, install, secrets, verification, benchmarking, troublesho
 
 ```
 install.sh                 bare-metal installer: disks, install, secrets, model
+wifi-diag.sh               on-box Wi-Fi diagnosis and restart, no rebuild needed
 flake.nix                  inputs: nixpkgs unstable, hermes-agent, (optional) nix-strix-halo
 flake.lock                 pinned inputs; committed
 configuration.nix          bootloader, user, SSH, firewall, podman
@@ -109,6 +110,26 @@ free -h                                  # ~124 GiB — if ~31 GiB, step 2 was m
 systemctl status llama-server hermes-agent
 hermes chat
 ```
+
+The console shows an `IPv4:` line above the login prompt. If it is blank,
+Wi-Fi did not come up — log in at the keyboard and run:
+
+```bash
+cd ~/nix-os-strix-halo
+./wifi-diag.sh              # what is broken, and which journal says so
+./wifi-diag.sh --restart    # bounce wpa_supplicant + dhcpcd and re-check
+```
+
+It checks the card, rfkill, the unit, association, the lease, the route and
+DNS, then prints the journals that explain whichever one failed. A wrong
+passphrase is fixed by editing `/var/lib/wifi/env` and re-running with
+`--restart`: that file is not in the Nix store, so no rebuild is involved.
+
+It deliberately uses only what the box already has — `iw` and `nmcli` are
+not installed, and installing them would need the network that is broken.
+
+Failing all that, `dhcpcd` runs on every interface, so an ethernet cable
+gets you a lease and an SSH login without Wi-Fi at all.
 
 ### 5. Discord bot — optional, after the box is up
 

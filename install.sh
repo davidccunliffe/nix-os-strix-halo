@@ -457,20 +457,18 @@ ${G}${B}Done.${N}
 
 ${B}If the console shows no IPv4${N}
 
-  The interface is $WIFI_IFACE and the unit is named per-interface, not
-  the plain wpa_supplicant.service:
+  Log in at the keyboard and run the diagnostic that ships with this repo:
 
-    systemctl status wpa_supplicant-${WIFI_IFACE}
-    journalctl -b -u wpa_supplicant-${WIFI_IFACE}
-    journalctl -b -u dhcpcd
-    iw dev $WIFI_IFACE link          # associated?
-    rfkill list                          # soft/hard blocked?
-    ip -br addr
+    cd ~/$(basename "$REPO") && ./wifi-diag.sh
+
+  It checks the card, rfkill, the unit, association, the lease, the route
+  and DNS, prints the relevant journals, and tells you which of those is
+  the actual problem. --restart bounces wpa_supplicant and dhcpcd.
 
   "4-way handshake failed" means the passphrase in $WIFI_SECRETS
   is wrong. "No suitable PSK available" means the '$PSK_KEY' line is
-  malformed. Either way, edit that file and 'systemctl restart
-  wpa_supplicant-${WIFI_IFACE}' — no rebuild needed.
+  malformed. Either way, edit that file and re-run with --restart — the
+  passphrase is not in the Nix store, so no rebuild is needed.
 
   Fallback that always works: dhcpcd runs on every interface, so plugging a
   cable into ${ETH_IFACE:-the ethernet port} gets you a lease and an SSH
