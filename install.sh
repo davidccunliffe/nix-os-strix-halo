@@ -126,9 +126,10 @@ cat <<EOF
   then: nixos-install --flake .#$FLAKE_ATTR
         write $WIFI_SECRETS and /var/lib/{llama,hermes}/env
         $PW_PLAN
-        download $MODEL_NAME (~32 GB)
         copy this repo to /home/$TARGET_USER/
         put this install's ESP first in the EFI boot order
+        download $MODEL_NAME (~32 GB) — last, so a failure here
+          leaves a box you can still boot and log into
 
 ${B}Currently on those disks${N}
 EOF
@@ -355,19 +356,6 @@ nixos-enter --root /mnt --silent -- \
 ok "$WPA_UNIT enabled, reads '$PSK_KEY' from $WIFI_SECRETS, joins $SSID"
 info "dhcpcd runs on all interfaces (networking.useDHCP), so the lease follows"
 
-# ------------------------------------------------------------------ model --
-step "Downloading $MODEL_NAME (~32 GB)"
-info "resumable — safe to re-run this script's download step if interrupted"
-LLAMA_UID="$(awk -F: '/^llama:/{print $3}' /mnt/etc/passwd)"
-LLAMA_GID="$(awk -F: '/^llama:/{print $4}' /mnt/etc/passwd)"
-curl -fL --progress-bar -C - -o "/mnt${MODEL_PATH}" "$MODEL_URL"
-if [[ -n "$LLAMA_UID" && -n "$LLAMA_GID" ]]; then
-  chown "$LLAMA_UID:$LLAMA_GID" "/mnt${MODEL_PATH}"
-  chown "$LLAMA_UID:$LLAMA_GID" "/mnt${MODEL_PATH%/*}"
-  chmod 0750 "/mnt${MODEL_PATH%/*}"
-fi
-ok "$(du -h "/mnt${MODEL_PATH}" | cut -f1) at $MODEL_PATH"
-
 # ------------------------------------------------------------- repo copy ---
 step "Copying the repo onto the target"
 # The ISO's home is tmpfs. Without this, the repo and its history die with
@@ -415,6 +403,26 @@ else
   warn "no EFI entry points at this ESP ($ESP_PARTUUID) — set the boot order"
   warn "by hand, or the box will not come up on this install"
 fi
+
+# ------------------------------------------------------------------ model --
+# Deliberately last. It is the only step measured in tens of minutes and the
+# only one that can die on a flaky link, and everything that makes the box
+# reachable — password, boot entry, repo — is already done by the time it
+# starts. An interrupted download then costs you a resume, not a reinstall:
+# llama-server crash-loops on the missing GGUF, but you can log in and fix
+# it. Losing the download used to take the repo copy and the boot order with
+# it, which is a far worse place to be.
+step "Downloading $MODEL_NAME (~32 GB)"
+info "resumable — re-run 'curl -C - -o $MODEL_PATH $MODEL_URL' on the box"
+LLAMA_UID="$(awk -F: '/^llama:/{print $3}' /mnt/etc/passwd)"
+LLAMA_GID="$(awk -F: '/^llama:/{print $4}' /mnt/etc/passwd)"
+curl -fL --progress-bar -C - -o "/mnt${MODEL_PATH}" "$MODEL_URL"
+if [[ -n "$LLAMA_UID" && -n "$LLAMA_GID" ]]; then
+  chown "$LLAMA_UID:$LLAMA_GID" "/mnt${MODEL_PATH}"
+  chown "$LLAMA_UID:$LLAMA_GID" "/mnt${MODEL_PATH%/*}"
+  chmod 0750 "/mnt${MODEL_PATH%/*}"
+fi
+ok "$(du -h "/mnt${MODEL_PATH}" | cut -f1) at $MODEL_PATH"
 
 # ------------------------------------------------------------------- done --
 ETH_IFACE="$(ls /sys/class/net | grep -E '^(en|eth)' | head -1 || true)"

@@ -75,8 +75,12 @@ shows exactly what is on them first.
 
 It partitions both disks, generates and commits the real
 `hardware-configuration.nix`, writes the three secret files, runs
-`nixos-install`, **downloads the model**, copies this repo to
-`/home/david/` and fixes the EFI boot order.
+`nixos-install`, copies this repo to `/home/david/`, fixes the EFI boot
+order, and **downloads the model** last.
+
+The download goes last on purpose: it is the only step measured in tens of
+minutes, so if it dies you are left with a box that still boots and still
+lets you log in, and a `curl -C -` resume to finish.
 
 Just before the DESTROY prompt it asks whether to set a console password
 for `david`. This repo commits no password — a hash here would be public
