@@ -110,6 +110,46 @@ ok "flake       .#$FLAKE_ATTR"
 ok "model       $MODEL_NAME"
 ok "ssid        $SSID on $WIFI_IFACE (psk from $WIFI_SECRETS, key '$PSK_KEY')"
 
+# ------------------------------------------------------------ uma carve-out --
+# The BIOS carve-out cannot be set from Nix, but it can be measured, and
+# getting it wrong strands most of the machine's RAM in a VRAM pool nothing
+# uses. This box shipped at 96 GiB, which left the host 31 GiB and made
+# strix-halo.nix's 105 GiB GTT limit both unreachable and pointless. Measure
+# it here rather than lecturing about it afterwards — the fix is a BIOS trip
+# and a reboot, which is much cheaper to learn about before the long install
+# than after it.
+VRAM_MIB=0
+for f in /sys/class/drm/card*/device/mem_info_vram_total; do
+  [[ -r "$f" ]] && VRAM_MIB=$(( $(cat "$f") / 1024 / 1024 )) && break
+done
+HOST_GIB=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) / 1024 / 1024 ))
+
+UMA_OK=1
+if [[ "$VRAM_MIB" -eq 0 ]]; then
+  UMA_OK=unknown
+  warn "uma         could not read the carve-out from sysfs; check it by hand"
+elif [[ "$VRAM_MIB" -gt 4096 ]]; then
+  UMA_OK=0
+  warn "uma         ${VRAM_MIB} MiB carved out, leaving the host ${HOST_GIB} GiB"
+  warn ""
+  warn "That is the 'big static carve-out just strands memory' case guide §1"
+  warn "warns about. The Vulkan/GTT path this repo is built around allocates"
+  warn "from the shared pool at run time, so a large dedicated VRAM window is"
+  warn "committed whether or not a model is loaded, and the OS, Hermes and"
+  warn "podman are left to share what is left."
+  warn ""
+  warn "Fix it in the BIOS now — iGPU / UMA frame buffer to 512 MB - 4 GB —"
+  warn "rather than after a ~40 minute install and a 32 GB download."
+  echo
+  read -rp "    Carry on with the carve-out as it is? [y/N]: " uma_answer
+  case "$uma_answer" in
+    [Yy]|[Yy][Ee][Ss]) warn "continuing; expect benchmarks to be meaningless" ;;
+    *) die "aborted — set the UMA frame buffer to 512 MB - 4 GB and re-run" ;;
+  esac
+else
+  ok "uma         ${VRAM_MIB} MiB carved out, ${HOST_GIB} GiB to the host"
+fi
+
 # ------------------------------------------------------------------ plan --
 printf '\n%sPlan%s\n\n' "$B" "$N"
 printf '  %sDESTROYS%s %-14s -> p1 1G ESP (/boot) + p2 rest ext4 (/), no swap\n' "$R" "$N" "$OS_DISK"
@@ -432,6 +472,15 @@ ok "$(du -h "/mnt${MODEL_PATH}" | cut -f1) at $MODEL_PATH"
 
 # ------------------------------------------------------------------- done --
 ETH_IFACE="$(ls /sys/class/net | grep -E '^(en|eth)' | head -1 || true)"
+case "$UMA_OK" in
+  1) UMA_STEP="UMA carve-out measured at ${VRAM_MIB} MiB with ${HOST_GIB} GiB to the
+     host — already correct, nothing to do in the BIOS." ;;
+  0) UMA_STEP="${Y}Set the iGPU / UMA frame buffer to 512 MB - 4 GB while you are
+     in there.${N} It measured ${VRAM_MIB} MiB, leaving the host ${HOST_GIB} GiB.
+     Guide §1. Check after boot with 'free -h'." ;;
+  *) UMA_STEP="${Y}Check the iGPU / UMA frame buffer is 512 MB - 4 GB${N} — it could
+     not be read from this ISO. Guide §1. Check after boot with 'free -h'." ;;
+esac
 if [[ "$SET_PASSWORD" == "yes" ]]; then
   PW_NOTE="${B}Console login${N}
 
@@ -452,9 +501,7 @@ cat <<EOF
 ${G}${B}Done.${N}
 
   1. Reboot and remove the USB.
-  2. ${Y}While you are in the BIOS: set the iGPU / UMA frame buffer to
-     512 MB - 4 GB.${N} Guide §1. Verify after boot with 'free -h' — you
-     want ~124 GiB, not ~31 GiB.
+  2. $UMA_STEP
   3. At the console, read the IPv4 line above the login prompt. Blank means
      Wi-Fi did not come up — see below.
   4. Log in as $TARGET_USER and verify (guide §5):

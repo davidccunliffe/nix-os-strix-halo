@@ -59,7 +59,10 @@ Not larger. This box shipped at 96 GiB, which leaves the host 31 GiB and
 silently starves everything — see the BIOS section below. Also: IOMMU on,
 Secure Boot off.
 
-Easier now than after the install.
+Easier now than after the install. `install.sh` measures the carve-out in
+its preflight and refuses to go on past 4 GB unless you insist, so you find
+out before the long install rather than after it — but fixing it still means
+another BIOS trip and reboot, so do it on this one.
 
 ### 3. Run the installer
 
