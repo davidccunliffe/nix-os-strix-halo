@@ -10,6 +10,16 @@
 #   sudo ./install.sh              # do it
 #   sudo ./install.sh --dry-run    # print the plan and exit
 #
+# Options:
+#   --dry-run             print the plan and exit, touch nothing
+#   --set-password        set the default console password without asking
+#   --no-set-password     do not set one, do not ask
+#   --password=PW         use PW instead of the built-in default; implies
+#                         --set-password
+#
+# Given neither --set-password nor --no-set-password, the script asks — just
+# before the DESTROY confirmation, so the answer is part of the same decision.
+#
 # DESTRUCTIVE. It wipes BOTH disks named below, including any existing OS.
 #
 set -euo pipefail
@@ -19,11 +29,26 @@ OS_DISK="${OS_DISK:-/dev/nvme0n1}"        # -> ESP + root
 MODEL_DISK="${MODEL_DISK:-/dev/nvme1n1}"  # -> /var/lib/llama/models
 TARGET_USER="${TARGET_USER:-david}"
 FLAKE_ATTR="${FLAKE_ATTR:-ai-os}"
+# Written to the installed system as an *expired* password, so the first
+# console login is forced to replace it. Never written unless asked for.
+DEFAULT_PASSWORD="${DEFAULT_PASSWORD:-ChangeMe}"
 MODEL_URL="${MODEL_URL:-https://huggingface.co/ggml-org/GLM-4.7-Flash-GGUF/resolve/main/GLM-4.7-Flash-Q8_0.gguf}"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRY_RUN=0
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
+SET_PASSWORD=ask   # ask | yes | no
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)         DRY_RUN=1 ;;
+    --set-password)    SET_PASSWORD=yes ;;
+    --no-set-password) SET_PASSWORD=no ;;
+    --password=*)      DEFAULT_PASSWORD="${1#*=}"; SET_PASSWORD=yes
+                       [[ -n "$DEFAULT_PASSWORD" ]] || { printf '%s\n' '--password= needs a value' >&2; exit 2; } ;;
+    -h|--help)         sed -n '3,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's/^# \?//; $d'; exit 0 ;;
+    *)                 printf 'unknown option: %s (try --help)\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
 
 # ---------------------------------------------------------------- output --
 if [[ -t 1 ]]; then
@@ -60,27 +85,50 @@ MODEL_PATH="$(grep -oP 'modelFile\s*=\s*"\K[^"]+' "$REPO/modules/llama-server.ni
 [[ -n "$MODEL_PATH" ]] || die "could not read modelFile from modules/llama-server.nix"
 MODEL_NAME="$(basename "$MODEL_PATH")"
 
-# SSID likewise comes from configuration.nix — single source of truth.
-SSID="$(grep -oP 'networks\."\K[^"]+' "$REPO/configuration.nix" || true)"
-[[ -n "$SSID" ]] || die "could not read the Wi-Fi SSID from configuration.nix"
+# Everything about Wi-Fi likewise comes from configuration.nix — single
+# source of truth. The secrets file this script writes has to agree with the
+# generated wpa_supplicant config on all three of these (interface, secrets
+# path, and the key name behind `ext:`), and a silent disagreement means a
+# headless box with no network. Read them rather than restating them.
+SSID="$(grep -oP 'networks\."\K[^"]+' "$REPO/configuration.nix" | head -1 || true)"
+WIFI_IFACE="$(grep -oP 'interfaces\s*=\s*\[\s*"\K[^"]+' "$REPO/configuration.nix" | head -1 || true)"
+WIFI_SECRETS="$(grep -oP 'secretsFile\s*=\s*"\K[^"]+' "$REPO/configuration.nix" | head -1 || true)"
+PSK_KEY="$(grep -oP 'pskRaw\s*=\s*"ext:\K[^"]+' "$REPO/configuration.nix" | head -1 || true)"
+[[ -n "$SSID" ]]         || die "could not read the Wi-Fi SSID from configuration.nix"
+[[ -n "$WIFI_IFACE" ]]   || die "could not read networking.wireless.interfaces from configuration.nix"
+[[ -n "$WIFI_SECRETS" ]] || die "could not read networking.wireless.secretsFile from configuration.nix"
+[[ -n "$PSK_KEY" ]]      || die "could not read the pskRaw ext: key name from configuration.nix"
+
+# configuration.nix pins one interface by name. If the installed kernel calls
+# the card something else there is no Wi-Fi and no way in — catch it now,
+# while there is still a working network to fix it over.
+[[ -d "/sys/class/net/$WIFI_IFACE" ]] \
+  || die "configuration.nix pins '$WIFI_IFACE' but this box has no such interface: $(ls /sys/class/net | tr '\n' ' ')"
 
 ok "repo        $REPO"
 ok "flake       .#$FLAKE_ATTR"
 ok "model       $MODEL_NAME"
-ok "ssid        $SSID"
+ok "ssid        $SSID on $WIFI_IFACE (psk from $WIFI_SECRETS, key '$PSK_KEY')"
 
 # ------------------------------------------------------------------ plan --
 printf '\n%sPlan%s\n\n' "$B" "$N"
 printf '  %sDESTROYS%s %-14s -> p1 1G ESP (/boot) + p2 rest ext4 (/), no swap\n' "$R" "$N" "$OS_DISK"
 printf '  %sDESTROYS%s %-14s -> p1 whole-disk ext4 at %s\n' "$R" "$N" "$MODEL_DISK" "${MODEL_PATH%/*}"
 
+case "$SET_PASSWORD" in
+  yes) PW_PLAN="set $TARGET_USER's password to '$DEFAULT_PASSWORD', expired" ;;
+  no)  PW_PLAN="leave $TARGET_USER with no password (SSH key only)" ;;
+  *)   PW_PLAN="console password for $TARGET_USER: asked below" ;;
+esac
+
 cat <<EOF
 
   then: nixos-install --flake .#$FLAKE_ATTR
-        write /var/lib/{wifi,llama,hermes}/env
+        write $WIFI_SECRETS and /var/lib/{llama,hermes}/env
+        $PW_PLAN
         download $MODEL_NAME (~32 GB)
         copy this repo to /home/$TARGET_USER/
-        put "Linux Boot Manager" first in the EFI boot order
+        put this install's ESP first in the EFI boot order
 
 ${B}Currently on those disks${N}
 EOF
@@ -93,6 +141,38 @@ fi
 
 if [[ $DRY_RUN -eq 1 ]]; then
   echo; ok "dry run — nothing done"; exit 0
+fi
+
+# ----------------------------------------------------- console password ---
+# Asked before the DESTROY confirmation on purpose: by the time you type
+# DESTROY every decision this run makes is already settled.
+if [[ "$SET_PASSWORD" == "ask" ]]; then
+  step "Console password for $TARGET_USER"
+  info "This repo commits no password for $TARGET_USER, so out of the box the"
+  info "installed system has console login disabled and is reachable only by"
+  info "SSH key. If Wi-Fi does not come up on the first boot, that is no way"
+  info "in at all — you would be sitting at a login prompt that refuses you."
+  info ""
+  info "Saying yes sets '$DEFAULT_PASSWORD' and immediately expires it, so the"
+  info "first login has to replace it before it gets a shell. Nothing is"
+  info "committed to the repo either way; this is written to the installed"
+  info "system, not to Nix."
+  info ""
+  info "While it is expired, an interactive 'ssh $TARGET_USER@...' still works"
+  info "and runs passwd for you, but non-interactive SSH (scp, rsync, ssh with"
+  info "a command) is refused until the password has been changed."
+  echo
+  read -rp "    Set a default password for $TARGET_USER? [y/N]: " answer
+  case "$answer" in
+    [Yy]|[Yy][Ee][Ss]) SET_PASSWORD=yes ;;
+    *)                 SET_PASSWORD=no  ;;
+  esac
+fi
+if [[ "$SET_PASSWORD" == "yes" ]]; then
+  ok "will set '$DEFAULT_PASSWORD' for $TARGET_USER, expired on first use"
+else
+  warn "no console password — if Wi-Fi fails on first boot, plug in ethernet"
+  warn "or re-run this installer; the login prompt will not let you in"
 fi
 
 echo
@@ -112,7 +192,22 @@ if [[ -z "$PSK" ]]; then
   read -rsp "    passphrase (8-63 chars, not echoed): " PSK; echo
 fi
 [[ ${#PSK} -ge 8 && ${#PSK} -le 63 ]] || die "passphrase must be 8-63 characters (wpa_supplicant limit)"
-ok "passphrase accepted (${#PSK} chars)"
+
+# The secrets file is read by wpa_supplicant's file ext_password backend,
+# which parses it with wpa_config_get_line() — the same parser as
+# wpa_supplicant.conf. That parser strips a '#' and everything after it, and
+# strips leading and trailing whitespace. A passphrase containing either is
+# not rejected: it is silently truncated, PBKDF2'd into the wrong PSK, and
+# the box comes up associating and failing forever. Refuse it here instead.
+case "$PSK" in
+  *'#'*) die "passphrase contains '#': the secrets-file parser treats it as a comment and would silently use a truncated key" ;;
+esac
+[[ "$PSK" == "${PSK#[[:space:]]}" && "$PSK" == "${PSK%[[:space:]]}" ]] \
+  || die "passphrase has leading or trailing whitespace: the secrets-file parser strips it and the key would be wrong"
+if ! printf '%s' "$PSK" | LC_ALL=C grep -qE '^[[:print:]]+$'; then
+  die "passphrase has non-ASCII or non-printable characters; store a 64-hex PSK in $WIFI_SECRETS by hand instead"
+fi
+ok "passphrase accepted (${#PSK} chars, safe for the secrets-file parser)"
 
 # --------------------------------------------------------------- unmount --
 step "Clearing any existing mounts under /mnt"
@@ -181,9 +276,9 @@ ok "copied into the repo and staged"
 
 # ---------------------------------------------------------------- secrets --
 step "Writing secrets under /mnt"
-install -d -m 0700 /mnt/var/lib/wifi
-printf 'psk_foxyap=%s\n' "$PSK" > /mnt/var/lib/wifi/env
-chmod 0600 /mnt/var/lib/wifi/env
+install -d -m 0700 "/mnt$(dirname "$WIFI_SECRETS")"
+printf '%s=%s\n' "$PSK_KEY" "$PSK" > "/mnt$WIFI_SECRETS"
+chmod 0600 "/mnt$WIFI_SECRETS"
 unset PSK
 
 # One key, shared: Hermes authenticates against llama-server.
@@ -210,6 +305,55 @@ step "nixos-install (this is the slow part)"
 NIX_CONFIG='experimental-features = nix-command flakes' \
   nixos-install --flake "$REPO#${FLAKE_ATTR}" --no-root-password
 ok "installed"
+
+# ----------------------------------------------------- console password ---
+step "Console password for $TARGET_USER"
+if [[ "$SET_PASSWORD" == "yes" ]]; then
+  # Done through nixos-enter so the target's own shadow tooling and crypt
+  # settings apply, rather than whatever the ISO happens to ship. Absolute
+  # paths because chroot resolves the command against the ISO's PATH.
+  # users.mutableUsers is true, so this survives later nixos-rebuilds; a
+  # hashedPassword in the repo would be public and offline-crackable, which
+  # is exactly why this lives here and not in configuration.nix.
+  printf '%s:%s\n' "$TARGET_USER" "$DEFAULT_PASSWORD" \
+    | nixos-enter --root /mnt --silent -- /run/current-system/sw/bin/chpasswd
+  # Last-changed 0 = expired. login(1) and sshd both demand a replacement
+  # before handing over a shell.
+  nixos-enter --root /mnt --silent -- /run/current-system/sw/bin/chage -d 0 "$TARGET_USER"
+
+  ENTRY="$(awk -F: -v u="$TARGET_USER" '$1==u{print $2":"$3}' /mnt/etc/shadow || true)"
+  [[ -n "$ENTRY" ]] || die "no shadow entry for $TARGET_USER after chpasswd"
+  [[ "${ENTRY%%:*}" == \$* ]] || die "password did not take — shadow field is '${ENTRY%%:*}'"
+  [[ "${ENTRY##*:}" == "0" ]] || die "password set but not expired (last-changed '${ENTRY##*:}', wanted 0)"
+  ok "'$DEFAULT_PASSWORD' set and expired — first login must replace it"
+else
+  warn "no password set; console login for $TARGET_USER stays disabled"
+fi
+
+# -------------------------------------------------------- wifi preflight --
+# Everything needed for the first boot to reach the network, checked against
+# the system that was actually built rather than against the flake source.
+step "Wi-Fi readiness for the first boot"
+[[ -f "/mnt$WIFI_SECRETS" ]] || die "$WIFI_SECRETS missing from the target"
+[[ "$(stat -c '%a %U' "/mnt$WIFI_SECRETS")" == "600 root" ]] \
+  || die "$WIFI_SECRETS is $(stat -c '%a %U' "/mnt$WIFI_SECRETS"), wanted '600 root'"
+grep -q "^${PSK_KEY}=" "/mnt$WIFI_SECRETS" || die "$WIFI_SECRETS has no '$PSK_KEY=' line"
+
+# /mnt/etc is a farm of symlinks into /etc/static, which resolve against the
+# ISO's /etc from out here — read the generated config from inside the target.
+WPA_CONF="$(nixos-enter --root /mnt --silent -- /run/current-system/sw/bin/cat /etc/wpa_supplicant/nixos.conf 2>/dev/null || true)"
+grep -q "ssid=\"$SSID\""                        <<<"$WPA_CONF" || die "generated wpa_supplicant config does not mention SSID '$SSID'"
+grep -q "psk=ext:$PSK_KEY"                      <<<"$WPA_CONF" || die "generated wpa_supplicant config does not read psk from ext:$PSK_KEY"
+grep -q "ext_password_backend=file:$WIFI_SECRETS" <<<"$WPA_CONF" || die "generated wpa_supplicant config points at a different secrets file than $WIFI_SECRETS"
+
+# Naming an interface makes NixOS emit a per-interface unit rather than the
+# plain wpa_supplicant.service — worth knowing before you go looking for it.
+WPA_UNIT="wpa_supplicant-${WIFI_IFACE}.service"
+nixos-enter --root /mnt --silent -- \
+  /run/current-system/sw/bin/test -e "/etc/systemd/system/multi-user.target.wants/$WPA_UNIT" \
+  || die "$WPA_UNIT is not wanted by multi-user.target — Wi-Fi would not start"
+ok "$WPA_UNIT enabled, reads '$PSK_KEY' from $WIFI_SECRETS, joins $SSID"
+info "dhcpcd runs on all interfaces (networking.useDHCP), so the lease follows"
 
 # ------------------------------------------------------------------ model --
 step "Downloading $MODEL_NAME (~32 GB)"
@@ -243,18 +387,52 @@ fi
 step "EFI boot order"
 # A wiped disk's old entry usually still sorts first, so the box would come
 # up on a dead entry.
-# Anchor on "* Linux Boot Manager" so this does not match the entry named
-# "Fallback Linux Boot Manager".
-BOOTNUM="$(efibootmgr | awk '/\* Linux Boot Manager/{print substr($1,5,4); exit}')"
+#
+# Match on the ESP's partition GUID, not on the entry's label. Every install
+# onto this box leaves behind another entry called "Linux Boot Manager"
+# pointing at an ESP that no longer exists, and reinstalling gives the new
+# ESP a fresh GUID — so picking the first entry by name reliably selects a
+# *stale* one and the box boots nothing. The GUID is unambiguous.
+# `systemd-bootx64.efi` excludes the "-fallbackx64" entry, which shares it.
+ESP_PARTUUID="$(blkid -s PARTUUID -o value "$ESP_PART" || true)"
+[[ -n "$ESP_PARTUUID" ]] || die "could not read the PARTUUID of $ESP_PART"
+BOOTNUM="$(efibootmgr | awk -v id="$ESP_PARTUUID" '
+  BEGIN { id = tolower(id) }
+  /^Boot[0-9A-Fa-f]{4}/ {
+    line = tolower($0)
+    if (index(line, id) && index(line, "systemd-bootx64.efi")) {
+      print substr($1, 5, 4); exit
+    }
+  }')"
 if [[ -n "$BOOTNUM" ]]; then
-  REST="$(efibootmgr | awk -v b="$BOOTNUM" '/^Boot[0-9A-F]{4}/{n=substr($1,5,4); if(n!=b) printf "%s,", n}')"
+  REST="$(efibootmgr | awk -v b="$BOOTNUM" '/^Boot[0-9A-Fa-f]{4}/{n=substr($1,5,4); if(n!=b) printf "%s,", n}')"
   efibootmgr -o "${BOOTNUM},${REST%,}" >/dev/null
-  ok "Boot$BOOTNUM (Linux Boot Manager) first"
+  ok "Boot$BOOTNUM first — systemd-boot on $ESP_PART ($ESP_PARTUUID)"
+  info "$(efibootmgr | grep '^BootOrder:')"
+  info "the other 'Linux Boot Manager' entries are dead ESPs from earlier"
+  info "installs; harmless once this one sorts first, delete from the BIOS"
 else
-  warn "could not find 'Linux Boot Manager' — set the boot order by hand"
+  warn "no EFI entry points at this ESP ($ESP_PARTUUID) — set the boot order"
+  warn "by hand, or the box will not come up on this install"
 fi
 
 # ------------------------------------------------------------------- done --
+ETH_IFACE="$(ls /sys/class/net | grep -E '^(en|eth)' | head -1 || true)"
+if [[ "$SET_PASSWORD" == "yes" ]]; then
+  PW_NOTE="${B}Console login${N}
+
+  $TARGET_USER / $DEFAULT_PASSWORD — already expired, so the first login has
+  to replace it. Do that at the console before you rely on scp or
+  'ssh $TARGET_USER@ai-os.local <command>': those are refused while the
+  password is expired, because there is no TTY to run passwd on."
+else
+  PW_NOTE="${B}Console login${N}
+
+  $TARGET_USER has no password, so the console login prompt will refuse you.
+  SSH key only. Re-run with --set-password if you want a way in at the
+  keyboard."
+fi
+
 cat <<EOF
 
 ${G}${B}Done.${N}
@@ -263,8 +441,32 @@ ${G}${B}Done.${N}
   2. ${Y}While you are in the BIOS: set the iGPU / UMA frame buffer to
      512 MB - 4 GB.${N} Guide §1. Verify after boot with 'free -h' — you
      want ~124 GiB, not ~31 GiB.
-  3. Log in as $TARGET_USER and verify (guide §5):
+  3. At the console, read the IPv4 line above the login prompt. Blank means
+     Wi-Fi did not come up — see below.
+  4. Log in as $TARGET_USER and verify (guide §5):
        systemctl status llama-server hermes-agent
-  4. Discord bot, if you want one: guide §6a.
+  5. Discord bot, if you want one: guide §6a.
 
+${B}If the console shows no IPv4${N}
+
+  The interface is $WIFI_IFACE and the unit is named per-interface, not
+  the plain wpa_supplicant.service:
+
+    systemctl status wpa_supplicant-${WIFI_IFACE}
+    journalctl -b -u wpa_supplicant-${WIFI_IFACE}
+    journalctl -b -u dhcpcd
+    iw dev $WIFI_IFACE link          # associated?
+    rfkill list                          # soft/hard blocked?
+    ip -br addr
+
+  "4-way handshake failed" means the passphrase in $WIFI_SECRETS
+  is wrong. "No suitable PSK available" means the '$PSK_KEY' line is
+  malformed. Either way, edit that file and 'systemctl restart
+  wpa_supplicant-${WIFI_IFACE}' — no rebuild needed.
+
+  Fallback that always works: dhcpcd runs on every interface, so plugging a
+  cable into ${ETH_IFACE:-the ethernet port} gets you a lease and an SSH
+  login without touching Wi-Fi at all.
+
+${PW_NOTE}
 EOF

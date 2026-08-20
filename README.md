@@ -78,6 +78,20 @@ It partitions both disks, generates and commits the real
 `nixos-install`, **downloads the model**, copies this repo to
 `/home/david/` and fixes the EFI boot order.
 
+Just before the DESTROY prompt it asks whether to set a console password
+for `david`. This repo commits no password — a hash here would be public
+and offline-crackable — so by default the installed box has console login
+disabled and is reachable only by SSH key, which is no way in at all if
+Wi-Fi does not come up on the first boot. Answering yes writes `ChangeMe`
+and immediately expires it, so the first login has to replace it. Skip the
+question with `--set-password` / `--no-set-password`, or choose your own
+with `--password=…`.
+
+While the password is expired, an interactive `ssh david@…` still works and
+runs `passwd` for you; non-interactive SSH (`scp`, `rsync`, `ssh host cmd`)
+is refused until it has been changed, because there is no TTY to run
+`passwd` on.
+
 The model download happens *before* the reboot on purpose: llama-server
 and Hermes both come up working on first boot instead of crash-looping on
 a missing GGUF.
