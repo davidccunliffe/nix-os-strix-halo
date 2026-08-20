@@ -237,7 +237,22 @@ Two startup gotchas that look like breakage but are config:
 
 State lives in `/var/lib/hermes` (HERMES_HOME is `/var/lib/hermes/.hermes`): memory, skills, sessions, cron, state.db. Back that directory up; it is the part of the agent that grows.
 
-Because `addToSystemPackages = true`, your shell's `hermes` and the gateway service share that state. The agent's persona file is `/var/lib/hermes/.hermes/SOUL.md`, managed directly on disk, and workspace context files can be installed declaratively via the module's `documents` option (`USER.md` is the conventional one).
+Because `addToSystemPackages = true`, your shell's `hermes` and the gateway service share that state. This only works if your user is in the `hermes` group — `/var/lib/hermes` is `0770 hermes:hermes`, and without membership the CLI dies before printing anything with `PermissionError: [Errno 13] Permission denied: '/var/lib/hermes/.hermes/.env'`. `configuration.nix` puts `david` in that group; add yourself the same way, and log out and back in, since group membership is only picked up at login.
+
+Two things the local endpoint needs that are easy to miss, both set in `modules/hermes.nix`:
+
+- **`model.provider`.** `base_url` says *where* to send inference, not which provider adapter to route it through. Without `provider = "openai-api"` every agent run fails with `No LLM provider configured` — while `hermes status` still reports `Model: local-main / Provider: Custom endpoint`, which sends you looking in the wrong place. The adapter takes its key from `OPENAI_API_KEY` in `/var/lib/hermes/env`, the same key llama-server checks.
+- **`auxiliary.compression`.** The summarizer moved out of `compression.summary_model`, which is now deprecated *and ignored*. Left there it reads as "summaries stay local" while they would go to the default provider. `hermes doctor` is the check: it should say `No deprecated config keys or env vars`.
+
+Smoke test after any change, which exercises config, provider, key and llama-server in one go:
+
+```bash
+hermes -z "Reply with exactly: hermes online"
+```
+
+`hermes doctor` is worth a look on first setup regardless — it checks the venv, SSL, directories, every tool's dependencies and the API connectivity, and names what is missing. A remaining `Config version outdated (v0 → v38)` warning is informational: new settings exist upstream that this config does not set.
+
+The agent's persona file is `/var/lib/hermes/.hermes/SOUL.md`, managed directly on disk, and workspace context files can be installed declaratively via the module's `documents` option (`USER.md` is the conventional one).
 
 ## 6a. Discord bot
 

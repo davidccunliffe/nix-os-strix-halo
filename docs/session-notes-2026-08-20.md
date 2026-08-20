@@ -246,6 +246,75 @@ Worth keeping in mind for the sops-nix/agenix upgrade in the deferred list:
 the same distinction applies there. Whatever supplies this file has to make
 it readable to `wpa_supplicant`, not just to root.
 
+
+## Hermes: running, but not usable until three things were fixed
+
+The gateway service had been up since the install and looked healthy, which
+hid the fact that nothing could actually reach the agent.
+
+**1. No messaging platform.** The journal says it plainly —
+`gateway.run: No messaging platforms enabled` — because `/var/lib/hermes/env`
+holds only `OPENAI_API_KEY`. Discord is guide §6a: browser work in the
+Developer Portal, then the token and `DISCORD_ALLOWED_USERS` appended to that
+file, then a rebuild. Not done yet; the box has no bot registered.
+
+**2. The CLI was unusable for `david`** — and it is the same shape of bug as
+the Wi-Fi one, a service-owned path the human is not a member of:
+
+```
+PermissionError: [Errno 13] Permission denied: '/var/lib/hermes/.hermes/.env'
+```
+
+`/var/lib/hermes` is `0770 hermes:hermes`; `david` was in `wheel video
+render` and not `hermes`. Guide §6 promised that the shell's `hermes` and the
+gateway share one HERMES_HOME, which was true in intent and false in
+practice. Fixed by adding `"hermes"` to `extraGroups`. The setgid bit already
+on those directories means files created from the shell stay group-owned by
+hermes, so sharing works in both directions. Group membership only lands at
+login, so it needs a fresh session — `sudo -u david -i` is enough to test.
+
+**3. The agent refused to run at all**, with an error that points away from
+the cause:
+
+```
+hermes -z: agent failed: No LLM provider configured.
+```
+
+while `hermes status` simultaneously reported `Model: local-main` and
+`Provider: Custom endpoint`. `modules/hermes.nix` set `model.base_url` and
+`model.default` but no `model.provider`, and base_url only says *where* to
+send inference — not which adapter to route it through. With none resolved,
+Hermes gives up before opening a socket. Setting `provider = "openai-api"`
+(the OpenAI-compatible adapter in its `PROVIDER_REGISTRY`, which reads
+`OPENAI_API_KEY`) fixed it: `hermes -z` now answers from the local model, as
+`david`, in 0.7s.
+
+Worth recording how misleading the intermediate states were. Forcing
+`--provider openai-api` on the command line got as far as llama-server and
+came back `HTTP 401: Missing Authentication header`, which looks like a key
+problem and is not one — the key was fine all along; the config-level
+provider is what makes Hermes attach it.
+
+### Two follow-on findings
+
+- **`compression.summary_model` is deprecated and ignored**, replaced by
+  `auxiliary.compression = { model, provider }`. Left as it was, the setting
+  reads as "summaries stay local" while they would go to the default
+  provider — a silent egress of conversation summaries on a box whose whole
+  premise is that nothing leaves it. `hermes doctor` now reports
+  `No deprecated config keys or env vars`.
+- **The module deep-merges into `config.yaml` and keeps keys it no longer
+  manages.** That is deliberate (it lets the TUI and `hermes config set`
+  write there too), but it means *removing* a setting from
+  `modules/hermes.nix` does not remove it from disk: `summary_model` survived
+  the rebuild and doctor kept flagging it until it was deleted from the file
+  by hand. Anyone dropping a setting from that module has to do the same.
+
+`hermes doctor` still notes `Config version outdated (v0 → v38)`. That is
+informational — upstream has settings this config does not set — not a
+failure, and `hermes migrate` is left alone deliberately: it rewrites
+`config.yaml`, which the module owns.
+
 ## Current state
 
 Installed, booted, on the network, serving. Verified this session:

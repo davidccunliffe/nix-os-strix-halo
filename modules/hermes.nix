@@ -22,6 +22,15 @@
     # with the gateway service instead of creating a second ~/.hermes.
     addToSystemPackages = true;
 
+    # NOTE: the module deep-merges these into $HERMES_HOME/config.yaml and
+    # keeps every key it does not manage — which is what lets the TUI and
+    # `hermes config set` write there too. The corollary bites: *deleting* a
+    # setting here does not delete it from config.yaml. When
+    # compression.summary_model was moved to auxiliary.compression below, the
+    # old key sat on disk through a rebuild and `hermes doctor` kept flagging
+    # it as deprecated. Removing a setting means removing it from the file by
+    # hand, once:
+    #   sudo -e /var/lib/hermes/.hermes/config.yaml   (root:hermes, 0660)
     settings = {
       # Everything stays on-box: client AWS account details must not leave
       # the LAN, so the provider is the local llama-server, not OpenRouter
@@ -29,6 +38,17 @@
       model = {
         base_url = "http://127.0.0.1:8000/v1";
         default = "local-main";   # must match -a alias in llama-server.nix
+
+        # Without this the agent will not run at all: `hermes -z` dies with
+        # "No LLM provider configured", while `hermes status` cheerfully
+        # reports "Model: local-main / Provider: Custom endpoint" — which is
+        # what makes it confusing. base_url says *where* to send inference;
+        # it does not say which provider adapter to route it through, and
+        # with none resolved Hermes refuses before it ever opens a socket.
+        # "openai-api" is the OpenAI-compatible adapter in Hermes'
+        # PROVIDER_REGISTRY, and it takes its key from OPENAI_API_KEY in the
+        # environmentFiles below — the same key llama-server checks.
+        provider = "openai-api";
       };
 
       toolsets = [ "all" ];
@@ -48,7 +68,18 @@
       compression = {
         enabled = true;
         threshold = 0.85;
-        summary_model = "local-main";
+      };
+
+      # The summarizer moved out of `compression` in newer Hermes:
+      # `compression.summary_model` is deprecated and, more to the point,
+      # *ignored* — `hermes doctor` flags it but nothing migrates it, so the
+      # setting reads as "summaries stay local" while they would actually go
+      # to whatever the default provider is. Provider is repeated here
+      # because auxiliary tasks resolve their own; left at "auto" it does not
+      # inherit the main model's.
+      auxiliary.compression = {
+        model = "local-main";
+        provider = "openai-api";
       };
 
       agent = {

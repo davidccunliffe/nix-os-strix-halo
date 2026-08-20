@@ -51,7 +51,16 @@
 
   users.users.david = {
     isNormalUser = true;
-    extraGroups = [ "wheel" "video" "render" ];
+    # "hermes" is what makes the CLI usable. addToSystemPackages puts
+    # `hermes` on PATH and points HERMES_HOME at /var/lib/hermes/.hermes so
+    # the shell and the gateway share one set of sessions, memory and skills
+    # — but that directory is 0770 hermes:hermes, so without this the CLI
+    # dies before it prints anything:
+    #   PermissionError: [Errno 13] Permission denied:
+    #   '/var/lib/hermes/.hermes/.env'
+    # The setgid bit on those directories keeps files created from the shell
+    # group-owned by hermes, so the sharing actually works both ways.
+    extraGroups = [ "wheel" "video" "render" "hermes" ];
     # Password auth is disabled below; this key is "macbook-personal"
     # from 1Password.
     openssh.authorizedKeys.keys = [

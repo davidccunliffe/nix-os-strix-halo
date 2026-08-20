@@ -111,7 +111,8 @@ Pull the USB. Then confirm the stack (details in guide §5):
 ```bash
 free -h                                  # ~124 GiB — if ~31 GiB, step 2 was missed
 systemctl status llama-server hermes-agent
-hermes chat
+hermes -z "Reply with exactly: hermes online"   # config, provider, key and llama-server in one
+hermes chat                              # interactive, same shared state as the gateway
 ```
 
 The console shows an `IPv4:` line above the login prompt. If it is blank,
