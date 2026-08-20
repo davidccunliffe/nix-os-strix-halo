@@ -8,33 +8,63 @@ Full walkthrough (BIOS, install, secrets, verification, benchmarking, troublesho
 
 ```
 flake.nix                  inputs: nixpkgs unstable, hermes-agent, (optional) nix-strix-halo
-flake.lock                 created by nix on first build; commit it
+flake.lock                 pinned inputs; committed
 configuration.nix          bootloader, user, SSH, firewall, podman
-hardware-configuration.nix EXAMPLE, overwrite with your generated one
+hardware-configuration.nix generated on this machine; real, not a placeholder
 modules/strix-halo.nix     kernel, firmware, GTT sizing, RADV, monitoring
 modules/llama-server.nix   Vulkan llama-server systemd service
 modules/hermes.nix         services.hermes-agent pointed at llama-server
-secrets/*.env.example      templates for the two runtime env files
+secrets/*.env.example      templates for the three runtime env files
+docs/session-notes-*.md    what was actually done, and what bit us
 ```
+
+## Disk layout
+
+Installed 2026-08-20. Both NVMe drives are in use:
+
+| Disk | Layout |
+| --- | --- |
+| `nvme0n1` | `p1` 1 GB ESP (vfat, `/boot`) · `p2` rest ext4 (`/`) · no swap |
+| `nvme1n1` | `p1` whole-disk ext4, mounted at `/var/lib/llama/models` |
+
+The model store is its own disk, so `modules/llama-server.nix` orders the
+unit against that mount (`RequiresMountsFor`). No swap anywhere — it would
+fight the GTT pool.
 
 ## Quickstart
 
-Placeholders to change before the first build: the SSH key in `configuration.nix`, `modelFile` and `modelAlias` in `modules/llama-server.nix` (alias must match `settings.model.default` in `modules/hermes.nix`), and `hardware-configuration.nix` (replace with the generated file).
+Day-to-day, from a checkout on the box:
 
 ```bash
-git init && git add -A     # flakes only see tracked files
-
-# On the machine, after copying the real hardware-configuration.nix in:
 sudo nixos-rebuild switch --flake .#ai-os
-
-# Runtime secrets (see secrets/ for the templates, guide section 3
-# for the exact install commands):
-#   /var/lib/wifi/env     psk_foxyap=...       (Wi-Fi passphrase, needed at first boot)
-#   /var/lib/llama/env    LLAMA_API_KEY=...
-#   /var/lib/hermes/env   OPENAI_API_KEY=...   (same value)
 
 # Update later:
 nix flake update && sudo nixos-rebuild switch --flake .#ai-os
 ```
 
-`flake.lock` does not ship in this scaffold; the first `nix flake lock` or rebuild writes it. Commit it so every rebuild is reproducible, and check `nix eval nixpkgs#linux-firmware.version` is not 20251125 after any nixpkgs bump.
+Runtime secrets, none of them in this repo (templates in `secrets/`, exact
+commands in guide §3):
+
+```
+/var/lib/wifi/env     psk_foxyap=...          Wi-Fi passphrase; needed at first boot or the box is headless and offline
+/var/lib/llama/env    LLAMA_API_KEY=...
+/var/lib/hermes/env   OPENAI_API_KEY=...      same value as above
+                      DISCORD_BOT_TOKEN=...   optional, see guide §6
+                      DISCORD_ALLOWED_USERS=...
+```
+
+Check `nix eval nixpkgs#linux-firmware.version` is not `20251125` after any
+nixpkgs bump — that release breaks ROCm on Strix Halo.
+
+## BIOS
+
+Three settings, and the first one is easy to get wrong:
+
+1. **iGPU / UMA frame buffer: 512 MB – 4 GB.** Not larger. The Vulkan/GTT
+   path allocates dynamically from the unified pool; a big static carve-out
+   permanently strands that memory and starves the host. This box shipped
+   with **96 GiB** carved out, which left the OS 31 GiB and made the
+   105 GiB `ttm.pages_limit` in `modules/strix-halo.nix` unreachable.
+   Verify after boot with `free -h` — expect ~124 GiB, not ~31 GiB.
+2. IOMMU enabled.
+3. Secure Boot disabled (NixOS does not do Secure Boot out of the box).

@@ -24,6 +24,20 @@ Put this directory in a Git repo. `nixos-rebuild` against a flake requires the f
 Three settings before installing:
 
 1. Set the dedicated iGPU memory (UMA frame buffer) to a small value, 512 MB to 4 GB. The Vulkan/GTT path allocates dynamically from the shared pool, and `modules/strix-halo.nix` sizes GTT to roughly 105 GiB via `ttm.pages_limit`. A big static carve-out just strands memory.
+
+   **This machine shipped with 96 GiB carved out and it was missed on the first install.** The symptom is quiet — nothing errors, the box just behaves as if it has a quarter of the RAM it does:
+
+   ```
+   amdgpu: VRAM: 98304M    <- 96 GiB permanently committed to the iGPU
+   MemTotal:      31.0 GiB <- everything else fights over this
+   ```
+
+   Worse than the lost capacity: GTT is allocated from *system* RAM, so a 105 GiB `ttm.pages_limit` against a 31 GiB host is both unreachable and useless as a safety limit, which is the entire point of that knob. Check it every time you touch firmware:
+
+   ```bash
+   free -h                                    # want ~124 GiB, not ~31 GiB
+   sudo dmesg | grep -i 'amdgpu.*VRAM'        # want a small number here
+   ```
 2. Confirm the IOMMU is enabled.
 3. Secure Boot: NixOS does not do Secure Boot out of the box. Disable it, or plan on lanzeboote later. You already know this dance from the Bazzite shim episode.
 
@@ -42,14 +56,84 @@ To scan for SSIDs: `nmcli device wifi list`. The wireless interface on this mach
 Then install:
 
 ```bash
-# Partition and mount as usual, then:
+# Two disks: nvme0n1 becomes the OS, nvme1n1 becomes the model store.
+sgdisk --zap-all /dev/nvme0n1
+sgdisk -n1:0:+1G -t1:EF00 -c1:ESP  /dev/nvme0n1
+sgdisk -n2:0:0   -t2:8300 -c2:root /dev/nvme0n1
+partprobe /dev/nvme0n1
+
+mkfs.vfat -F32 -n ESP /dev/nvme0n1p1
+mkfs.ext4 -L nixos -F /dev/nvme0n1p2
+
+# Model store. -m 0: no point reserving 5% root space on a disk that
+# only ever holds model weights.
+sgdisk --zap-all /dev/nvme1n1
+sgdisk -n1:0:0 -t1:8300 -c1:models /dev/nvme1n1
+partprobe /dev/nvme1n1
+mkfs.ext4 -L models -m 0 -F /dev/nvme1n1p1
+
+# Mount all three BEFORE generating, or the generated file is missing
+# filesystems and will not boot.
+mount /dev/disk/by-label/nixos /mnt
+mkdir -p /mnt/boot /mnt/var/lib/llama/models
+mount -o umask=0077 /dev/disk/by-label/ESP /mnt/boot
+mount /dev/disk/by-label/models /mnt/var/lib/llama/models
+
+# Sanity check: exactly three lines, no duplicates. See the gotcha below.
+grep ' /mnt' /proc/self/mountinfo
+
 nixos-generate-config --root /mnt
 
 # Copy the generated hardware config into this repo:
 cp /mnt/etc/nixos/hardware-configuration.nix /path/to/ai-os-nixos/
 
-# Install from the flake (from the repo directory):
-nixos-install --flake .#ai-os
+# Install from the flake (from the repo directory). Note the NIX_CONFIG:
+# nixos-install does NOT accept --extra-experimental-features and dies
+# instantly on the unknown option.
+sudo NIX_CONFIG='experimental-features = nix-command flakes' \
+  nixos-install --flake .#ai-os
+```
+
+If the ZFS pools of a previous install are in the way, clear them first — `wipefs` alone is not enough, ZFS labels live at both ends of the device:
+
+```bash
+swapoff /dev/nvme1n1p3
+zpool labelclear -f /dev/nvme1n1p2
+zpool labelclear -f /dev/nvme1n1p4
+wipefs -a /dev/nvme1n1p1 /dev/nvme1n1p2 /dev/nvme1n1p3 /dev/nvme1n1p4
+sgdisk --zap-all /dev/nvme1n1
+zpool import          # expect "no pools available to import"
+```
+
+**Gotcha: duplicated `fileSystems` entries.** `nixos-generate-config` transcribes `/proc/self/mountinfo` literally, so if a mount got stacked twice it emits `fileSystems."/"` twice — a duplicate-attribute error that fails the build. This is easy to cause: a compound `set -e` command can report failure *after* its `mount` already succeeded, and the obvious retry stacks a second mount. If the generated file looks doubled, don't blame the generator:
+
+```bash
+grep ' /mnt' /proc/self/mountinfo         # more lines than filesystems?
+for i in 1 2 3 4 5; do umount -R /mnt; done
+# remount once, then regenerate
+```
+
+Cheap insurance before committing to a long install — this catches the above in seconds:
+
+```bash
+nix --extra-experimental-features 'nix-command flakes' \
+  eval .#nixosConfigurations.ai-os.config.system.build.toplevel.drvPath
+```
+
+**After the install finishes, check the EFI boot order.** If the disk you wiped held the previous OS, its firmware entry usually still sorts first and the box comes up on a dead entry:
+
+```bash
+efibootmgr                          # find the "Linux Boot Manager" number
+efibootmgr -o 0001,0004,...         # put it first
+```
+
+Dangling entries for the destroyed OS can be left alone; they fail over harmlessly.
+
+**The installer's home directory is tmpfs.** If you cloned this repo into the live ISO's `/home/nixos`, it — and any commits made there — evaporate on reboot. Copy it onto the target before rebooting:
+
+```bash
+cp -a /path/to/ai-os-nixos /mnt/home/david/
+chown -R 1000:100 /mnt/home/david/ai-os-nixos
 ```
 
 If you would rather install stock first and convert after, that works too: install normally, clone this repo, drop `hardware-configuration.nix` in, then `sudo nixos-rebuild switch --flake .#ai-os`.
@@ -134,9 +218,70 @@ State lives in `/var/lib/hermes` (HERMES_HOME is `/var/lib/hermes/.hermes`): mem
 
 Because `addToSystemPackages = true`, your shell's `hermes` and the gateway service share that state. The agent's persona file is `/var/lib/hermes/.hermes/SOUL.md`, managed directly on disk, and workspace context files can be installed declaratively via the module's `documents` option (`USER.md` is the conventional one).
 
-Messaging (Telegram, Discord, Slack) is off by default here. To enable: uncomment `extraDependencyGroups = [ "messaging" ]` in `modules/hermes.nix`, add the bot token to `/var/lib/hermes/env`, add the platform config under `settings`, rebuild, restart. Runtime pip installs cannot work in the sealed Nix venv, which is why the dependency group must be declared.
+## 6a. Discord bot
 
-The web dashboard (port 9119) is deliberately not in the firewall list. If you turn it on, reach it over the existing VPN or an SSH tunnel only.
+`extraDependencyGroups = [ "messaging" ]` is set in `modules/hermes.nix`. On Nix this is not optional the way it is elsewhere: the venv is sealed and read-only, so a missing extra cannot be pip-installed at runtime and must be resolved in at build time. Without it the gateway starts and logs `No adapter available for discord`.
+
+Everything else is browser work in the [Discord Developer Portal](https://discord.com/developers/applications), because the bot token is shown exactly once and only to a signed-in session.
+
+1. **New Application.** Note the **Application ID**.
+2. **Bot** tab → **Public Bot** ON (required to use the Discord-provided invite link; if you want it private you must build the OAuth2 URL by hand).
+3. **Privileged Gateway Intents** → enable **Message Content Intent** *and* **Server Members Intent**. Save.
+
+   Do not skip this. It is the single most common failure mode: without Message Content Intent the bot connects, shows online, and receives message events whose text is *empty*, so it silently never answers. A bot that is online and mute is almost always this.
+4. **Reset Token**, copy it immediately.
+5. **Invite it.** A `discord.gg/...` link is a *server* invite for humans and cannot add a bot. You need an OAuth2 authorize URL built from your own Application ID:
+
+   ```
+   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=274878286912
+   ```
+
+   `274878286912` = View Channels, Send Messages, Read Message History, Attach Files, Embed Links, Send Messages in Threads, Add Reactions. You need **Manage Server** on the target server to authorize.
+6. **Your Discord user ID:** Settings → Advanced → Developer Mode ON, then right-click your name → Copy User ID.
+
+Then on the box — credentials go in the env file, never in `settings` or `environment`, which land world-readable in `/nix/store`:
+
+```bash
+sudo tee -a /var/lib/hermes/env >/dev/null <<'EOF'
+DISCORD_BOT_TOKEN=...
+DISCORD_ALLOWED_USERS=your-user-id      # comma-separate for more
+EOF
+sudo chmod 0600 /var/lib/hermes/env
+
+sudo nixos-rebuild switch --flake .#ai-os   # slow: messaging pulls a large dep set
+systemctl restart hermes-agent
+journalctl -u hermes-agent -f
+```
+
+`environmentFiles` is **not** a systemd `EnvironmentFile=` — the module merges those files into `$HERMES_HOME/.env` at activation, so the unit has no `EnvironmentFile` line and changes need a `nixos-rebuild switch`, not just a restart. Confirm with:
+
+```bash
+sudo cut -d= -f1 /var/lib/hermes/.hermes/.env    # key names only
+```
+
+Behaviour once it is up: **DMs** get answered every time, **server channels** only on `@mention`. Each user in a shared channel gets their own session by default (`group_sessions_per_user: true`) so two people in one channel do not share a transcript. To make a channel mention-free, add it to `DISCORD_FREE_RESPONSE_CHANNELS`.
+
+Hermes needs llama-server answering before any of this works — the bot will come online and then fail on every message if no model is loaded. Get §5 green first.
+
+## 6b. Remote access to Hermes
+
+`backend.mode` defaults to `"none"`, and `modules/hermes.nix` does not set it. The unit runs `hermes gateway`, which is the *messaging* gateway only. The web dashboard and the `/api/ws` + `/api/pty` sockets that Hermes Desktop connects to come from a different process (`hermes serve` / `hermes dashboard`). So out of the box the only remote access is SSH in and run `hermes` interactively — which works fine and shares state with the service.
+
+For a real endpoint, in `modules/hermes.nix`:
+
+```nix
+backend.mode = "dashboard";   # or "serve" for no UI, Desktop sockets only
+backend.port = 9119;
+```
+
+Reach it over an SSH tunnel; 9119 is deliberately absent from the firewall list in `configuration.nix`:
+
+```bash
+ssh -L 9119:127.0.0.1:9119 david@<box>
+# then http://127.0.0.1:9119
+```
+
+The tunnel is not just caution. The backend binds `127.0.0.1` by default, any other bind address turns on an authentication gate, and it rejects requests whose `Host` header does not match the address it bound to as a DNS-rebinding defence. Tunnelling to `127.0.0.1:9119` satisfies all of that; exposing it on the LAN means solving both.
 
 Claude Code as a second client of the same endpoint keeps working exactly as documented in your stack notes: `ANTHROPIC_BASE_URL` at the llama-server endpoint, attribution header disabled in settings.json, and mind the process-global URL scope.
 

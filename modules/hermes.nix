@@ -57,15 +57,31 @@
       };
     };
 
+    # Discord bot credentials are NOT declared here. They are secrets, and
+    # anything in `settings` or `environment` lands world-readable in
+    # /nix/store. They go in the environmentFiles path below, which the
+    # module merges into $HERMES_HOME/.env at activation:
+    #
+    #   DISCORD_BOT_TOKEN=...            # Developer Portal -> Bot -> Reset Token
+    #   DISCORD_ALLOWED_USERS=...        # your Discord user ID; comma-separate for more
+    #
+    # DISCORD_ALLOWED_USERS is the authorization gate — leaving it unset
+    # does not mean "allow everyone by accident", but do set it explicitly.
+    # In server channels the bot only answers when @mentioned; DMs always.
+    # Both "Message Content Intent" and "Server Members Intent" must be ON
+    # in the Developer Portal or the bot connects but reads empty messages.
+
     # Bootstrap: plain root-owned 0600 file (created in the guide). Upgrade
     # path is sops-nix or agenix; the module docs show both. Never put keys
     # in `settings` or `environment`: those land world-readable in
     # /nix/store.
     environmentFiles = [ "/var/lib/hermes/env" ];
 
-    # Uncomment to enable the Telegram/Discord/Slack gateway deps in the
-    # sealed venv (runtime pip install is impossible on Nix):
-    # extraDependencyGroups = [ "messaging" ];
+    # Discord/Telegram/Slack adapters. Required on Nix: the venv is sealed
+    # and read-only, so a missing extra cannot be pip-installed at runtime —
+    # it has to be resolved into the venv at build time. Without this the
+    # gateway starts but logs "No adapter available for discord".
+    extraDependencyGroups = [ "messaging" ];
 
     # Extra tools the agent may call from its terminal:
     extraPackages = with pkgs; [
