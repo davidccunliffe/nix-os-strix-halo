@@ -28,6 +28,14 @@ let
   ctxSize  = 131072;
   parallel = 1;
 
+  # 16 = the physical core count of the Ryzen AI MAX+ 395 (16C/32T).
+  # Deliberately not 32: llama.cpp gains nothing from SMT siblings on a
+  # memory-bandwidth-bound workload and usually loses a little to
+  # contention. Mostly this matters for prompt processing and any CPU
+  # fallback — at -ngl 99 decode barely touches it. This box does nothing
+  # but inference, so there is no reason to leave cores for anything else.
+  threads = 16;
+
   startScript = pkgs.writeShellScript "llama-server-start" ''
     exec ${llamaPkg}/bin/llama-server \
       -m ${modelFile} \
@@ -41,7 +49,7 @@ let
       --parallel ${toString parallel} \
       --cache-type-k q8_0 --cache-type-v q8_0 \
       --no-mmap \
-      --threads 8
+      --threads ${toString threads}
   '';
   # When you land the router config (multi-model planner/worker setup),
   # replace the single -m invocation above with your router flags. Your
