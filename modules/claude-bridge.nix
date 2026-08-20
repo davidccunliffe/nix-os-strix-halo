@@ -80,6 +80,19 @@ let
       exit 2
     fi
 
+    # Start somewhere the caller can actually read. Without this, claude
+    # inherits the caller's cwd — and when Hermes (as the hermes user) is
+    # invoked from a shell sitting in /home/david, that directory is 0700 and
+    # unreadable, so the model looks around, finds nothing, and reports that
+    # the file does not exist rather than that it could not look.
+    if [ -n "$DIR" ]; then
+      cd "$DIR" || { echo "claude-consult: cannot enter $DIR" >&2; exit 1; }
+    elif cd /var/lib/hermes/workspace 2>/dev/null; then
+      :
+    else
+      cd /tmp || exit 1
+    fi
+
     # Read-only by construction. Planning does not need Write, Edit or Bash,
     # and withholding them means a consult cannot fight the local agent over
     # the same files — two agents writing one tree is a bad afternoon.
