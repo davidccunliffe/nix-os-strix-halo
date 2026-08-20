@@ -38,6 +38,29 @@
     ];
   };
 
+  # Headless, Wi-Fi-only box: without this the console shows no address and
+  # there is no way to learn where to SSH short of the router's DHCP table.
+  # \4{iface} is an agetty escape, resolved when the prompt is drawn — so it
+  # follows the lease rather than baking an address into the Nix store.
+  # Shows blank until the interface has an address; that itself is a useful
+  # signal that Wi-Fi did not come up.
+  services.getty.helpLine = ''
+    IPv4: \4{wlp195s0}
+  '';
+
+  # mDNS, so `ssh david@ai-os.local` works from the LAN without knowing the
+  # address at all. Complements the line above rather than replacing it: the
+  # console still tells you the truth when name resolution is the problem.
+  services.avahi = {
+    enable = true;
+    nssmdns4 = true;
+    publish = {
+      enable = true;
+      addresses = true;
+    };
+  };
+  networking.firewall.allowedUDPPorts = [ 5353 ];
+
   # Headless box reached only by key-authenticated SSH, so the key is
   # already the strong factor and a sudo password adds little. It removes a
   # specific lockout: no password is set for `david` in this repo (a hash
