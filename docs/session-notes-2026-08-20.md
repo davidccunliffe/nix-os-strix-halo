@@ -315,6 +315,65 @@ informational — upstream has settings this config does not set — not a
 failure, and `hermes migrate` is left alone deliberately: it rewrites
 `config.yaml`, which the module owns.
 
+
+## Discord bot: working, and four corrections to guide §6a
+
+The bot is live — DM answered, so Discord → Hermes → llama-server → back is
+proven end to end. Getting there turned up four things §6a had wrong or
+missing, all now fixed.
+
+**The switch does not restart the service.** The one that actually cost
+time. Adding secrets to `/var/lib/hermes/env` does not change the system
+closure, so `nixos-rebuild switch` produced a byte-identical store path,
+systemd saw an unchanged unit, and left the running gateway alive with its
+old environment. The activation *did* merge the new keys into
+`$HERMES_HOME/.env` — but the process that needed them had been running
+since before they existed, and kept logging `No messaging platforms
+enabled` as though nothing had been configured. An explicit
+`systemctl restart hermes-agent` is what applies it. Same shape as the
+Wi-Fi bug in a way: the config was right on disk and the consumer never
+saw it.
+
+**Public Bot should be OFF, not ON.** §6a said to enable it, to use
+Discord's provided invite link — but §6a already tells you to hand-build the
+OAuth2 URL, so the reason never applied to its own procedure. Private costs
+nothing and matters here: this bot feeds an agent with `toolsets = [ "all" ]`
+and a local terminal backend, and `DISCORD_ALLOWED_USERS` is the only gate
+in front of it. Public means anyone with the URL can put traffic against
+that single gate.
+
+**The permission integer documented eight permissions and described
+seven.** `274878286912` decodes to View Channels, Send Messages, Read
+Message History, Embed Links, Attach Files, Add Reactions, Send Messages in
+Threads — *and* Use External Emojis (1<<18), which the prose never
+mentioned. Verified by decoding the bits rather than trusting the comment.
+The guide now leads with `274878024768`, the same set minus the emoji bit,
+and lists what is deliberately excluded and why.
+
+**Nothing said what success looks like.** Hermes logs no "logged in as"
+line, so the signal is the absence of a failure: `No messaging platforms
+enabled` disappearing and `hermes_plugins.discord_platform.adapter`
+appearing. Two lines look like failures and are not — `Opus codec not
+found` is voice-only, and `Main process exited, code=exited,
+status=1/FAILURE` at restart is the *previous* process returning 1 on
+SIGTERM.
+
+### One more trap, found while iterating
+
+The module's env merge **appends**. A key written twice to
+`/var/lib/hermes/env` becomes two lines there and then grows in
+`$HERMES_HOME/.env` on every activation — this box reached three
+`DISCORD_BOT_TOKEN` lines and two `DISCORD_ALLOWED_USERS`. The parser takes
+the last occurrence, so it keeps working while quietly accumulating, which
+is exactly the kind of thing that is baffling six months later. §6a now
+carries a dedupe recipe that keeps the last of each key.
+
+Also folded into §9: five troubleshooting rows covering the mute bot, the
+ignored user, secrets-not-applied, `could not find a flake.nix file` (`.#ai-os`
+resolves against the *current* directory, which bites when you are one
+directory up), and the `hermes` CLI PermissionError from a session that
+predates the group change.
+
 ## Current state
 
 Installed, booted, on the network, serving. Verified this session:

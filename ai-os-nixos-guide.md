@@ -258,42 +258,77 @@ The agent's persona file is `/var/lib/hermes/.hermes/SOUL.md`, managed directly 
 
 `extraDependencyGroups = [ "messaging" ]` is set in `modules/hermes.nix`. On Nix this is not optional the way it is elsewhere: the venv is sealed and read-only, so a missing extra cannot be pip-installed at runtime and must be resolved in at build time. Without it the gateway starts and logs `No adapter available for discord`.
 
-Everything else is browser work in the [Discord Developer Portal](https://discord.com/developers/applications), because the bot token is shown exactly once and only to a signed-in session.
+Everything else is browser work in the [Discord Developer Portal](https://discord.com/developers/applications), because the bot token is shown exactly once and only to a signed-in session. The portal is organised in tabs, so this follows them in order.
 
-1. **New Application.** Note the **Application ID**.
-2. **Bot** tab → **Public Bot** ON (required to use the Discord-provided invite link; if you want it private you must build the OAuth2 URL by hand).
-3. **Privileged Gateway Intents** → enable **Message Content Intent** *and* **Server Members Intent**. Save.
+**General Information tab**
+
+1. **New Application.** Note the **Application ID** — needed for the invite URL, not a secret.
+
+**Bot tab** — the two decisions that matter are both here.
+
+2. **Public Bot → OFF.** Only the application owner can then install it. This is the opposite of the usual advice, and it is deliberate: this bot pipes messages into an agent with `toolsets = [ "all" ]` and `terminal.backend = "local"`, so it executes on the box. `DISCORD_ALLOWED_USERS` is the only gate between a stranger and that agent, and public means anyone holding the URL can put unknown traffic in front of that single gate. Turning it off costs nothing here, because step 6 builds the invite URL by hand anyway. Note it is not retroactive — flipping it off later blocks new installs but does not remove the bot from servers it already joined.
+3. **Requires OAuth2 Code Grant → OFF.** Unrelated to public/private, and a common self-inflicted wound: it makes the invite expect an authorization-code exchange against a redirect URI you would have to host, so with no such server the invite just fails.
+4. **Privileged Gateway Intents:** **Message Content Intent** ON, **Server Members Intent** ON, Presence Intent off. **Save Changes** — they do not persist otherwise.
 
    Do not skip this. It is the single most common failure mode: without Message Content Intent the bot connects, shows online, and receives message events whose text is *empty*, so it silently never answers. A bot that is online and mute is almost always this.
-4. **Reset Token**, copy it immediately.
-5. **Invite it.** A `discord.gg/...` link is a *server* invite for humans and cannot add a bot. You need an OAuth2 authorize URL built from your own Application ID:
+5. **Reset Token**, copy it immediately. Three dot-separated base64url parts, roughly 70 characters. Anyone holding it can act as your bot anywhere it is installed; if it leaks, Reset Token again and the old one dies instantly.
+
+**Installation tab**
+
+6. **Installation Contexts:** **Guild Install** only. Turn **User Install** off — that variant installs the app to a user account so it travels with them, which is not what you want for an agent wired to one machine. Set **Install Link → None**; the Discord-provided link is the public-invite convenience that pairs with Public Bot ON.
+
+**OAuth2 tab**
+
+7. **Invite it.** A `discord.gg/...` link is a *server* invite for humans and cannot add a bot. Use an OAuth2 authorize URL built from your own Application ID, opened while signed in as the owner (you also need **Manage Server** on the target server):
 
    ```
-   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=274878286912
+   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=274878024768
    ```
 
-   `274878286912` = View Channels, Send Messages, Read Message History, Attach Files, Embed Links, Send Messages in Threads, Add Reactions. You need **Manage Server** on the target server to authorize.
-6. **Your Discord user ID:** Settings → Advanced → Developer Mode ON, then right-click your name → Copy User ID.
+   `274878024768` is least privilege for a mention-and-DM agent, and decodes exactly to: View Channels (1<<10), Send Messages (1<<11), Read Message History (1<<16), Embed Links (1<<14), Attach Files (1<<15), Add Reactions (1<<6), Send Messages in Threads (1<<38). Use `274878286912` if you also want Use External Emojis (1<<18) — cosmetic only.
 
-Then on the box — credentials go in the env file, never in `settings` or `environment`, which land world-readable in `/nix/store`:
+   Deliberately absent: **Administrator** (collapses every check into one flag, in front of an agent that runs commands), **Manage Messages** (delete anyone's messages; not needed to edit or delete its own), **Mention Everyone** (an agent that can `@everyone` is one prompt injection from a bad afternoon), and all of Manage Server/Roles/Webhooks/Kick/Ban/Moderate. Hermes' `discord_admin` toolset is the only thing that would want more — leave it unconfigured.
+
+   Permissions are not intents, and server grants can still be overridden per channel. If it answers in one channel and not another, check that channel's permission overwrites for the bot's role.
+
+8. **Your Discord user ID:** Settings → Advanced → Developer Mode ON, then right-click your name → Copy User ID (17-19 digits).
+
+Then on the box — credentials go in the env file, never in `settings` or `environment`, which land world-readable in `/nix/store`. `read -rs` keeps the token out of shell history and out of `ps`, since it reaches root over a pipe rather than as an argument:
 
 ```bash
-sudo tee -a /var/lib/hermes/env >/dev/null <<'EOF'
-DISCORD_BOT_TOKEN=...
-DISCORD_ALLOWED_USERS=your-user-id      # comma-separate for more
-EOF
+read -rsp 'Discord bot token: ' TOKEN && echo
+printf 'DISCORD_BOT_TOKEN=%s\n' "$TOKEN" | sudo tee -a /var/lib/hermes/env >/dev/null
+unset TOKEN
+printf 'DISCORD_ALLOWED_USERS=%s\n' 'your-user-id' | sudo tee -a /var/lib/hermes/env >/dev/null
 sudo chmod 0600 /var/lib/hermes/env
 
-sudo nixos-rebuild switch --flake .#ai-os   # slow: messaging pulls a large dep set
-systemctl restart hermes-agent
-journalctl -u hermes-agent -f
+cd ~/nix-os-strix-halo                        # `.#ai-os` means "flake in the CURRENT directory"
+sudo nixos-rebuild switch --flake .#ai-os
+sudo systemctl restart hermes-agent           # NOT optional - see below
 ```
 
-`environmentFiles` is **not** a systemd `EnvironmentFile=` — the module merges those files into `$HERMES_HOME/.env` at activation, so the unit has no `EnvironmentFile` line and changes need a `nixos-rebuild switch`, not just a restart. Confirm with:
+`root:root 0600` is correct for this file, unlike `/var/lib/wifi/env`: the module reads it as root at activation, rather than a privilege-dropped daemon reading it live.
+
+`environmentFiles` is **not** a systemd `EnvironmentFile=` — the module merges those files into `$HERMES_HOME/.env` at activation, so the unit has no `EnvironmentFile` line and changes need a `nixos-rebuild switch`. **And the switch alone is not enough.** Adding secrets does not change the system closure, so systemd sees an unchanged unit and leaves the running process alive with the old environment — the merge happens, the gateway never learns about it, and the log keeps saying `No messaging platforms enabled` as though nothing was configured. The explicit restart is what applies it.
+
+Watch for one trap while iterating: the merge **appends**, so a key written twice to `/var/lib/hermes/env` (an `>>` run twice, say) becomes two lines there and grows in `$HERMES_HOME/.env` on every activation. The parser takes the last occurrence, so it keeps working while quietly accumulating. Check with `cut -d= -f1 /var/lib/hermes/.hermes/.env` (no sudo needed — you are in the `hermes` group) and dedupe the source, keeping the last of each key:
 
 ```bash
-sudo cut -d= -f1 /var/lib/hermes/.hermes/.env    # key names only
+sudo bash -c 'tac /var/lib/hermes/env | awk -F= "!seen[\$1]++" | tac > /var/lib/hermes/env.new \
+  && chmod 0600 /var/lib/hermes/env.new && chown root:root /var/lib/hermes/env.new \
+  && mv /var/lib/hermes/env.new /var/lib/hermes/env'
 ```
+
+**What success looks like.** Hermes logs no "logged in as" line, so the absence of the failure is the signal:
+
+```bash
+journalctl -u hermes-agent -b | grep -c "No messaging platforms enabled"   # want 0 after the restart
+journalctl -u hermes-agent -b | grep discord_platform                      # adapter loaded
+```
+
+You want `hermes_plugins.discord_platform.adapter` in the log and the `No messaging platforms enabled` warning gone. Two lines look like failures and are not: `Opus codec not found` only disables voice playback, and `Main process exited, code=exited, status=1/FAILURE` at the moment of restart is the *previous* process returning 1 on SIGTERM. The real confirmation is the bot answering a DM.
+
+`DISCORD_ALLOWED_USERS` is also what clears the startup warning about `No env user allowlists configured` — that warning is the gateway saying it will deny unknown senders, and your ID is what turns the deny-list into an allow-list of one.
 
 Behaviour once it is up: **DMs** get answered every time, **server channels** only on `@mention`. Each user in a shared channel gets their own session by default (`group_sessions_per_user: true`) so two people in one channel do not share a transcript. To make a channel mention-free, add it to `DISCORD_FREE_RESPONSE_CHANNELS`.
 
@@ -366,6 +401,11 @@ Because llama.cpp and Mesa both move fast and both change the Vulkan-vs-ROCm bal
 | `hermes setup` or `config set` refuses | Managed mode. Edit `modules/hermes.nix`, rebuild. |
 | Messaging platform "no adapter available" | Dependency group missing from the sealed venv. Set `extraDependencyGroups = [ "messaging" ]`, rebuild, restart. |
 | ROCm container cannot see the GPU | Toolbox needs `/dev/kfd` and `/dev/dri` plus video/render groups; distrobox passes these by default, plain `podman run` needs `--device` flags. |
+| Discord bot online but never answers | Message Content Intent off in the Developer Portal, or Save Changes not clicked. It receives message events with empty text. |
+| Discord bot ignores you specifically | `DISCORD_ALLOWED_USERS` missing or holding the wrong ID; the gateway also logs `No env user allowlists configured`. |
+| Secrets added but the gateway behaves as if not | Adding secrets does not change the closure, so `nixos-rebuild switch` leaves the running unit alone. `systemctl restart hermes-agent`. |
+| `could not find a flake.nix file` | `.#ai-os` resolves the flake from the current directory. `cd ~/nix-os-strix-halo` first, or pass the absolute path. |
+| `hermes` CLI dies on PermissionError reading `.env` | Your user is not in the `hermes` group, or the session predates being added — group membership only attaches at login. |
 | Service works, `hermes` CLI shows stale state | `addToSystemPackages` was toggled after first use, leaving a second `~/.hermes`. Remove the stray one. |
 
 ## Deferred decisions, on purpose

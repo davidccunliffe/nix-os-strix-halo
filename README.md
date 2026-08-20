@@ -153,7 +153,9 @@ sudo tee -a /var/lib/hermes/env >/dev/null <<'EOF'
 DISCORD_BOT_TOKEN=...
 DISCORD_ALLOWED_USERS=your-discord-user-id
 EOF
+cd ~/nix-os-strix-halo    # .#ai-os means the flake in the CURRENT directory
 sudo nixos-rebuild switch --flake .#ai-os
+sudo systemctl restart hermes-agent    # the switch alone will not restart it
 ```
 
 Remote access to the Hermes dashboard is off by default — guide §6b.
