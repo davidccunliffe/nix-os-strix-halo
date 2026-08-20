@@ -29,17 +29,15 @@ Three settings before installing:
 
 ## 2. Install NixOS
 
-Use the minimal ISO. No ethernet drop where the box lives, so get the installer online over Wi-Fi first. The wireless interface on this machine is `wlp195s0` (check `ip link` if in doubt), and the ISO's wpa_supplicant unit is unreliable — run the daemon directly:
+Use the minimal ISO. No ethernet drop where the box lives, so get the installer online over Wi-Fi first. The minimal ISO ships NetworkManager (verified on this machine), so do NOT hand-run wpa_supplicant — it fights NetworkManager for the interface and you end up associated but leaseless. One command does association + DHCP:
 
 ```bash
-sudo sh -c 'echo "ctrl_interface=/run/wpa_supplicant" > /etc/wpa_supplicant.conf; wpa_passphrase "FoxyAP" "the-passphrase" >> /etc/wpa_supplicant.conf'
-sudo pkill wpa_supplicant
-sudo wpa_supplicant -B -i wlp195s0 -c /etc/wpa_supplicant.conf
-sudo systemctl restart dhcpcd   # dhcpcd is a service on the ISO, not a command
-ip a && ping -c 3 nixos.org     # inet on wlp195s0, then you're online
+sudo pkill wpa_supplicant    # only if you started one by hand
+sudo nmcli device wifi connect "FoxyAP" password "the-passphrase"
+ip a && ping -c 3 nixos.org  # inet on wlp195s0, then you're online
 ```
 
-(To discover an SSID: write the conf with only the ctrl_interface line, start the daemon the same way, then `sudo wpa_cli -i wlp195s0 scan` and `scan_results`. A "could not set interface p2p-dev-..." warning from wpa_supplicant is harmless.)
+To scan for SSIDs: `nmcli device wifi list`. The wireless interface on this machine is `wlp195s0`; check `ip link` if in doubt. (The installed system uses declarative wpa_supplicant from this repo, not NetworkManager — that only applies to the ISO.)
 
 Then install:
 
