@@ -29,6 +29,7 @@ sudo nixos-rebuild switch --flake .#ai-os
 
 # Runtime secrets (see secrets/ for the templates, guide section 3
 # for the exact install commands):
+#   /var/lib/wifi/env     psk_foxyap=...       (Wi-Fi passphrase, needed at first boot)
 #   /var/lib/llama/env    LLAMA_API_KEY=...
 #   /var/lib/hermes/env   OPENAI_API_KEY=...   (same value)
 

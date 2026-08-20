@@ -4,6 +4,19 @@
   networking.hostName = "ai-os";
   time.timeZone = "America/New_York";
 
+  # Wi-Fi: the box has no ethernet drop where it lives, so it joins FoxyAP
+  # over WLAN. Only the SSID is committed; the passphrase lives in
+  # /var/lib/wifi/env (see secrets/wifi.env.example) — anything written in
+  # a Nix expression lands world-readable in /nix/store. Wi-Fi does not
+  # come up until that file exists, so during nixos-install create it under
+  # /mnt before the first reboot.
+  networking.wireless = {
+    enable = true;
+    interfaces = [ "wlp195s0" ];
+    secretsFile = "/var/lib/wifi/env";
+    networks."FoxyAP".pskRaw = "ext:psk_foxyap";
+  };
+
   # Bootloader lives here on purpose: nixos-generate-config does not emit
   # loader settings, so keeping them out of hardware-configuration.nix
   # means that file can be replaced wholesale without losing boot config.
