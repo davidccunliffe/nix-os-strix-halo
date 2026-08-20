@@ -14,3 +14,7 @@ result-*
 # real secrets never live in this repo (they belong in /var/lib/*/env);
 # only the *.env.example templates are tracked
 secrets/*.env
+
+# Claude Code per-machine permissions; install.sh does `git add -A`,
+# so this needs ignoring or every install stages it
+.claude/settings.local.json
