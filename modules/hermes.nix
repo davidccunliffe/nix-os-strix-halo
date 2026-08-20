@@ -131,6 +131,12 @@
       ripgrep
       jq
       curl
+      # Terraform comes from the flake rather than tfenv or a curl|unzip dance:
+      # the agent has no unzip and NixOS has no FHS for a downloaded toolchain
+      # to land in, and pinning here means `nix flake update` is the version
+      # bump. Without it the agent writes HCL it cannot fmt, validate or plan,
+      # which for infrastructure code leaves you as the only check.
+      terraform
     ];
   };
 }
