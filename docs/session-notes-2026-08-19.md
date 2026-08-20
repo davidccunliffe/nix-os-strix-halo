@@ -51,7 +51,9 @@ none were ever committed.
      harmless; `wpa_cli` needs `-i <real interface>` and a
      `ctrl_interface=/run/wpa_supplicant` line in the conf to connect at all.
 
-6. **Repo made PRIVATE and stays private.** The SSID had been pushed while the
+6. **Repo made PRIVATE and stays private.** *(Superseded — the repo is
+   public again as of 2026-08-20; see that session's notes. The reasoning
+   below still stands and the question is still open.)* The SSID had been pushed while the
    repo was public (~1 day exposure, passphrase never committed). SSIDs are
    wardriving-indexable and linkable to a location via a named GitHub account,
    so private is the resting state. Standing rule from this session: **ask

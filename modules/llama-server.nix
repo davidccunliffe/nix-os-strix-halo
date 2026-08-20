@@ -69,6 +69,11 @@ in
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
 
+    # /var/lib/llama/models is its own filesystem (nvme1n1). Ordering against
+    # it explicitly means the service cannot start against an empty mountpoint
+    # and crash-loop on a "missing" GGUF if the model disk is slow to appear.
+    unitConfig.RequiresMountsFor = [ "/var/lib/llama/models" ];
+
     serviceConfig = {
       User = "llama";
       Group = "llama";
