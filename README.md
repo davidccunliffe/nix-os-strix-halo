@@ -16,6 +16,7 @@ hardware-configuration.nix generated on this machine; real, not a placeholder
 modules/strix-halo.nix     kernel, firmware, GTT sizing, RADV, monitoring
 modules/llama-server.nix   Vulkan llama-server systemd service
 modules/hermes.nix         services.hermes-agent pointed at llama-server
+modules/claude-code.nix    Claude Code status line, built by Nix rather than hand-edited
 secrets/*.env.example      templates for the three runtime env files
 docs/session-notes-*.md    what was actually done, and what bit us
 ```

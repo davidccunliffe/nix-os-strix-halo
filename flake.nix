@@ -30,6 +30,7 @@
         ./modules/strix-halo.nix
         ./modules/llama-server.nix
         ./modules/hermes.nix
+        ./modules/claude-code.nix
 
         hermes-agent.nixosModules.default
 
