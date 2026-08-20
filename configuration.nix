@@ -68,6 +68,9 @@
     distrobox
     curl
     jq
+    # On-box debugging of this setup. Unfree (allowUnfree is set above);
+    # authenticate once per machine with `claude login`.
+    claude-code
   ];
 
   # Set to the release you FIRST installed from and never bump afterwards.
