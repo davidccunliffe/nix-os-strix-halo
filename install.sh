@@ -273,6 +273,12 @@ grep -q "${MODEL_PATH%/*}" /mnt/etc/nixos/hardware-configuration.nix \
 cp /mnt/etc/nixos/hardware-configuration.nix "$REPO/hardware-configuration.nix"
 # Flakes only see tracked files.
 git -C "$REPO" -c safe.directory="$REPO" add -A
+# ...but staging as root leaves root-owned objects in .git, and the ISO user
+# is then locked out of committing in their own checkout ("insufficient
+# permission for adding an object"). Hand it straight back.
+if [[ -n "${SUDO_UID:-}" ]]; then
+  chown -R "${SUDO_UID}:${SUDO_GID:-$SUDO_UID}" "$REPO/.git" "$REPO/hardware-configuration.nix"
+fi
 ok "copied into the repo and staged"
 
 # ---------------------------------------------------------------- secrets --
