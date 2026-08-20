@@ -35,8 +35,8 @@ Use the minimal ISO. No ethernet drop where the box lives, so get the installer 
 sudo sh -c 'echo "ctrl_interface=/run/wpa_supplicant" > /etc/wpa_supplicant.conf; wpa_passphrase "FoxyAP" "the-passphrase" >> /etc/wpa_supplicant.conf'
 sudo pkill wpa_supplicant
 sudo wpa_supplicant -B -i wlp195s0 -c /etc/wpa_supplicant.conf
-sudo dhcpcd wlp195s0
-ip a && ping -c 3 nixos.org   # inet on wlp195s0, then you're online
+sudo systemctl restart dhcpcd   # dhcpcd is a service on the ISO, not a command
+ip a && ping -c 3 nixos.org     # inet on wlp195s0, then you're online
 ```
 
 (To discover an SSID: write the conf with only the ctrl_interface line, start the daemon the same way, then `sudo wpa_cli -i wlp195s0 scan` and `scan_results`. A "could not set interface p2p-dev-..." warning from wpa_supplicant is harmless.)
