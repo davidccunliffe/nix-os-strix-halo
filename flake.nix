@@ -30,6 +30,7 @@
         ./modules/strix-halo.nix
         ./modules/llama-server.nix
         ./modules/hermes.nix
+        ./modules/hermes-context.nix
         ./modules/claude-code.nix
         ./modules/claude-bridge.nix
         ./modules/local-planner.nix
