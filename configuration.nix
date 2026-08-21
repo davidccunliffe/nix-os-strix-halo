@@ -132,6 +132,9 @@
     gh
     vim
     btop
+    # Long-running agent sessions outlive the SSH link that started
+    # them; without a multiplexer a dropped connection kills the run.
+    tmux
     distrobox
     curl
     jq
