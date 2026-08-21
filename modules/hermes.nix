@@ -61,7 +61,24 @@
         context_length = 131072;
       };
 
-      toolsets = [ "all" ];
+      # Not [ "all" ]. Tool definitions are re-sent on every API call, and
+      # "all" was costing 12,243 tokens a turn — 9.3% of the window, paid 50
+      # times in one session — to describe browser, computer-use, Spotify,
+      # Home Assistant, Feishu, image-gen, TTS and video tools that this box
+      # does not have. `hermes doctor` lists most of them as "system
+      # dependency not met" and Tavily has no key, so they were pure tax.
+      # This is the set the agent actually uses here; add one back the moment
+      # it is genuinely needed and pay for it deliberately.
+      toolsets = [
+        "terminal"        # the tool everything here runs through
+        "file"            # read/write in the workspace
+        "code_execution"  # observed in use during the Terraform builds
+        "skills"          # how it finds claude-consult and local-plan
+        "memory"
+        "todo"
+        "session_search"  # the FTS index over past sessions
+        "clarify"
+      ];
 
       # The bundled "claude-code" skill tells the agent to run `claude`
       # directly and to authenticate by running it once for a browser login.
@@ -93,7 +110,15 @@
       # model via OpenRouter.
       compression = {
         enabled = true;
-        threshold = 0.85;
+        # 0.35, not 0.85. At 0.85 of a 131k window it summarises at ~111k
+        # tokens, long after this box stops being pleasant: decode measures
+        # 48 tok/s at 2k context, 29 at 19k, and keeps falling, because every
+        # generated token attends over the whole KV cache. Compressing at
+        # ~46k keeps sessions in the fast band. The tradeoff is that
+        # compression rewrites history and so invalidates llama.cpp's prefix
+        # cache — one expensive turn, against spending the rest of the
+        # session in the slow band.
+        threshold = 0.35;
       };
 
       # The summarizer moved out of `compression` in newer Hermes:
