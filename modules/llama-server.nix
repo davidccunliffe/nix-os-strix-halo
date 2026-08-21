@@ -71,6 +71,12 @@ let
   # syntax: it assigns each model a port and substitutes the environment.
   swapConfig = pkgs.writeText "llama-swap.yaml" ''
     logLevel: info
+
+    # "both", not the default "proxy": llama-server writes the prompt- and
+    # token-rate lines that diagnosed the KV cache regression, and with only
+    # proxy logs they never reach the journal. Losing that telemetry is how
+    # a slow box becomes a mysterious box.
+    logToStdout: both
     startPort: 10001
 
     # A 63 GB model takes well over a minute to become healthy on this box,

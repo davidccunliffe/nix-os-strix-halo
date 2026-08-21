@@ -49,6 +49,16 @@
         # PROVIDER_REGISTRY, and it takes its key from OPENAI_API_KEY in the
         # environmentFiles below — the same key llama-server checks.
         provider = "openai-api";
+
+        # Must match --ctx-size for local-main in llama-server.nix.
+        # Hermes probes /props to learn this, and llama-swap does not proxy
+        # that path — the request carries no model name, so there is nothing
+        # to route it to. Unset, Hermes logs "Could not detect context length
+        # ... defaulting to 256,000 tokens" and then believes it has twice
+        # the room it does, so compression fires too late and turns die on
+        # context overflow instead of being summarised. Stating it is both
+        # the fix and the more honest configuration.
+        context_length = 131072;
       };
 
       toolsets = [ "all" ];
