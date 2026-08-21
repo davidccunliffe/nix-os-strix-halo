@@ -66,7 +66,11 @@
       skills.disabled = [ "claude-code" ];
       terminal = {
         backend = "local";
-        timeout = 180;
+        # 600, not the 180 this started at: a cold planner load is a 59 GiB
+        # model coming off disk before it answers anything, and a tool
+        # timeout shorter than that makes the planner tier unusable exactly
+        # when it is first reached. A genuinely hung command still dies.
+        timeout = 600;
       };
 
       memory = {

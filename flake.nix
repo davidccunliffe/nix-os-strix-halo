@@ -32,6 +32,7 @@
         ./modules/hermes.nix
         ./modules/claude-code.nix
         ./modules/claude-bridge.nix
+        ./modules/local-planner.nix
 
         hermes-agent.nixosModules.default
 
