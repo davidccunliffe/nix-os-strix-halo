@@ -28,6 +28,25 @@ let
   ctxSize  = 131072;
   parallel = 1;
 
+  # The KV cache is left at f16 deliberately. --cache-type-k/v q8_0 used to be
+  # set here; removing it is worth about a factor of two. Measured against
+  # this server with an identical 19k-token prompt, before and after:
+  #
+  #            prompt processing      decode      GTT used
+  #   q8_0        170 tok/s (113s)   19.4 tok/s   33.6 GiB
+  #   f16         336 tok/s  (57s)   29.1 tok/s   36.8 GiB
+  #
+  # Note the decode column, because llama-bench does not show it: its tg64
+  # test runs at trivial depth, where the cache is small enough that its
+  # format hardly matters (50.6 vs 49.8, indistinguishable). At 19k of real
+  # context every generated token reads the whole cache, so dequantizing it
+  # costs on both phases. Benchmark the depth you actually run at.
+  #
+  # The 3.2 GiB it costs is nothing against 105 GiB of GTT, and agent turns
+  # resend the whole conversation every time — so prompt processing is the
+  # cost that dominates here, and quantizing the cache is precisely the knob
+  # that makes it worse.
+
   # 16 = the physical core count of the Ryzen AI MAX+ 395 (16C/32T).
   # Deliberately not 32: llama.cpp gains nothing from SMT siblings on a
   # memory-bandwidth-bound workload and usually loses a little to
@@ -47,7 +66,6 @@ let
       --jinja \
       --ctx-size ${toString ctxSize} \
       --parallel ${toString parallel} \
-      --cache-type-k q8_0 --cache-type-v q8_0 \
       --no-mmap \
       --threads ${toString threads}
   '';
