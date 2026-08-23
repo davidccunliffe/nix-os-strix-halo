@@ -426,9 +426,25 @@ The host stays Vulkan. When you want to re-check the ROCm side (the 7.x prefill 
 Option A, kyuz0 toolboxes, unchanged from the Fedora days since podman + distrobox are installed:
 
 ```bash
-distrobox create --image docker.io/kyuz0/amd-strix-halo-toolboxes:rocm7 rocm-bench
+distrobox create --image docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.14 rocm-bench
 distrobox enter rocm-bench
 llama-bench -m /var/lib/llama/models/<model>.gguf -ngl 99 -fa 1 -p 512,2048,8192 -n 128
+```
+
+The `rocm7` tag this section used to name is gone — pulling it now fails with
+`manifest unknown`. Check the live tags before assuming, because they move:
+
+```bash
+curl -s "https://hub.docker.com/v2/repositories/kyuz0/amd-strix-halo-toolboxes/tags?page_size=100" \
+  | jq -r '.results[].name' | head -20
+```
+
+As of August 2026 that lists `rocm-7.14`, `rocm-6.4.4`, `vulkan-radv`,
+`vulkan-amdvlk`, `therock-nightly`, and `-rocmfpx` variants of the ROCm and
+Vulkan images, each also published with a dated suffix. The `-rocmfpx` images
+carry a prebuilt ROCmFPX `llama-server` in `/usr/local/bin` rather than the
+stock one, which is convenient for benchmarking that fork and misleading if
+you assume it is upstream llama.cpp.
 ```
 
 Run the same `llama-bench` matrix against the host Vulkan build and compare prefill (pp) and decode (tg) side by side at your production `--parallel`.
