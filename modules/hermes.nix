@@ -149,7 +149,22 @@ in
         provider = "openai-api";
       };
 
+      # Without this the gateway prompts "No home channel is set for Discord"
+      # on every fresh chat and waits for /sethome. /sethome writes the same
+      # thing into $HERMES_HOME state, so setting it here just states up front
+      # what the answer always was — and it survives a rebuild, which a
+      # hand-run slash command does not.
+      #
+      # This is the delivery target for cron output and for any cross-platform
+      # message that names a platform without naming a channel.
+      discord.home_channel = {
+        platform = "discord";
+        chat_id = "1540119647586619412";
+        name = "Hermes-Alerts";
+      };
+
       agent = {
+
         max_turns = 60;
         verbose = false;
       };

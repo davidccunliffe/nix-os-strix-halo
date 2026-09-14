@@ -81,8 +81,10 @@ let
 
     - **Ports below 1024 will not bind.** A compose service asking for 80 or
       443 fails. Map it high — 8080, 8443 — and say that you did.
-    - **You cannot `sudo`.** The unit sets NoNewPrivileges. There is no
-      escalation path; if something genuinely needs root, say so and stop.
+    - **You cannot `sudo`.** You have no sudoers entry — that is the reason,
+      not sandboxing. NoNewPrivileges is deliberately OFF on your unit so that
+      rootless podman's setuid newuidmap works, so do not cite it as your
+      limit. If something genuinely needs root, say so and stop.
     - **Host paths outside /var/lib/hermes are not yours to mount.**
 
     Healthchecks do work, so `depends_on: condition: service_healthy` is
