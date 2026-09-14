@@ -8,12 +8,28 @@
 # this file, `sudo nixos-rebuild switch`.
 #
 # Mode: native (default). Hardened systemd unit, agent can only use tools
-# on the Nix-provided PATH (add via extraPackages). If you later want the
-# agent to apt/pip/npm install for itself, flip container.enable = true
-# and set container.backend = "podman" (docker is the module default), plus
-# the passwordless-sudo-for-podman rule from the Hermes Nix docs.
+# on the Nix-provided PATH (add via extraPackages).
+#
+# Note the distinction, because the two are easy to conflate: the agent can
+# RUN containers (podman, rootless — see extraPackages and the block after
+# it), but it does not RUN INSIDE one. container.enable = true is the
+# separate switch that puts Hermes itself in a container so it can apt/pip/
+# npm install for itself; it is still off, and driving compose from in there
+# would mean nested containers. Running a compose stack does not need it.
 
+let
+  # Pinned, not discovered. Rootless podman needs XDG_RUNTIME_DIR to point at
+  # /run/user/<uid>, and that path has to be written into the unit at build
+  # time. The obvious trick — systemd's %U specifier — does NOT work here:
+  # for a system unit %U is the UID of the service MANAGER (root, 0), not the
+  # one in User=, so it silently produced /run/user/0 and podman lost its
+  # session bus. The uid was already 997 by dynamic allocation; naming it
+  # changes nothing today and stops it drifting underneath this path later.
+  hermesUid = 997;
+in
 {
+  users.users.hermes.uid = hermesUid;
+
   services.hermes-agent = {
     enable = true;
 
@@ -176,6 +192,63 @@
       # bump. Without it the agent writes HCL it cannot fmt, validate or plan,
       # which for infrastructure code leaves you as the only check.
       terraform
+
+      # Containers, rootless, as the hermes user. See the block below for the
+      # three prerequisites that make these actually run rather than just
+      # exist on PATH.
+      #
+      # podman-compose and not docker-compose: compose v2 is a docker CLI
+      # plugin that talks to a daemon socket, and there is no daemon on this
+      # box — `docker` here is only the dockerCompat shim onto podman.
+      # podman-compose drives the podman CLI directly, so it needs no socket,
+      # no lingering user session, and no API service running.
+      podman
+      podman-compose
     ];
+  };
+
+  # --- What it takes to give a hardened service user working rootless podman.
+  #
+  # 1. subuid/subgid ranges. Without them podman refuses with "no subuid
+  #    ranges found for user hermes" and falls back to a single-id mapping
+  #    that breaks most images. /etc/subuid listed only david, because he is
+  #    the only account with autoSubUidGidRange set. 200000 keeps clear of
+  #    david's 100000-165535.
+  users.users.hermes = {
+    subUidRanges = [{ startUid = 200000; count = 65536; }];
+    subGidRanges = [{ startGid = 200000; count = 65536; }];
+
+    # Lingering, so systemd starts a user manager for hermes at boot even
+    # though it never logs in. This is not cosmetic: podman runs container
+    # healthchecks as transient systemd user units, so without a user manager
+    # `--health-cmd` never fires, container health stays "starting" forever,
+    # and any compose service with `depends_on: condition: service_healthy`
+    # waits on a status that will never arrive. The agent's own compose stack
+    # depends on postgres exactly that way. It also stops podman falling back
+    # from the systemd cgroup manager to cgroupfs on every single invocation.
+    linger = true;
+  };
+
+  systemd.services.hermes-agent = {
+    # 2. newuidmap/newgidmap. Rootless podman shells out to these to apply the
+    #    ranges above, and finds them by PATH, not by absolute path. They are
+    #    setuid wrappers under /run/wrappers/bin, which is on the default
+    #    system PATH but NOT on a systemd unit's — the unit builds its PATH
+    #    from this `path` list alone. Omit this and podman fails at container
+    #    creation, long after `podman info` looks healthy.
+    path = [ "/run/wrappers" ];
+
+    environment = {
+      # 3. A runtime directory, which is where podman keeps its locks and
+      #    transient state and where the user session bus lives. With
+      #    lingering enabled above this is the real one at /run/user/<uid>,
+      #    shared with the user manager, rather than a private RuntimeDirectory
+      #    that would leave podman's systemd integration talking to nothing.
+      #
+      #    The uid is pinned in the let block above rather than discovered,
+      #    for the reason documented there.
+      XDG_RUNTIME_DIR = "/run/user/${toString hermesUid}";
+      DBUS_SESSION_BUS_ADDRESS = "unix:path=/run/user/${toString hermesUid}/bus";
+    };
   };
 }
