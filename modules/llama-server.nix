@@ -29,11 +29,27 @@ let
   # llama-cpp-vulkan / llama-cpp-master-vulkan outputs.
   llamaPkg = pkgs.llama-cpp.override { vulkanSupport = true; };
 
+  # The planner runs a DIFFERENT binary, from modules/llama-cpp-qwen4exp.nix:
+  # nixpkgs' llama-cpp has no `qwen4exp` architecture at all, and the MTP
+  # draft head is still an unmerged PR. Two binaries is the price of running
+  # this model before it lands upstream; the workhorse stays on nixpkgs.
+  qwen4expPkg = pkgs.llama-cpp-qwen4exp;
+
   # ---- Edit per model ----
   # Download onto the box with:
   #   sudo -u llama curl -fL -C - -o /var/lib/llama/models/<file>.gguf <url>
   workhorseFile = "/var/lib/llama/models/GLM-4.7-Flash-Q8_0.gguf";
-  plannerFile   = "/var/lib/llama/models/gpt-oss-120b-MXFP4.gguf";
+  plannerFile   = "/var/lib/llama/models/Qwen3.8-Flash-Next-AP-IQ4_XS.gguf";
+
+  # The MTP draft head, as a separate GGUF loaded with -md. It is one
+  # qwen4exp block trained jointly with the model, so it drafts tokens the
+  # target accepts 85-100% of the time — which is the whole reason this
+  # model decodes faster than its 177B size suggests.
+  plannerDraft  = "/var/lib/llama/models/mtp-Qwen3.8-Flash-Next-Q8_0.gguf";
+
+  # Kept, not deleted: 59 GiB of already-downloaded model, still reachable
+  # by name for an A/B against the new planner.
+  gptossFile    = "/var/lib/llama/models/gpt-oss-120b-MXFP4.gguf";
 
   port = 8000;
 
@@ -42,6 +58,15 @@ let
   # the TOTAL across slots: at --parallel 3 you need 3x the per-agent window.
   workhorseCtx = 131072;
   plannerCtx   = 65536;
+
+  # 65536 rather than the 32768 the A/B was run at, because Hermes rejects
+  # anything advertising under 64k. qwen4exp is a hybrid: most layers are
+  # gated-delta-net with a recurrent state that does not grow with context,
+  # so doubling the window costs far less KV than a dense model would.
+  # Measured headroom at 32k was ~41 GiB, so this is not close to the edge —
+  # but it is EXTRAPOLATED, not measured. Re-run the depth sweep at 64k
+  # before trusting it under real load.
+  qwen4expCtx  = 65536;
 
   # The KV cache is left at f16 deliberately. --cache-type-k/v q8_0 used to be
   # set here; removing it is worth about a factor of two. Measured against
@@ -84,11 +109,29 @@ let
     healthCheckTimeout: 900
 
     macros:
+      # --no-mmap moved OUT of the shared macro and onto the models that
+      # want it. It is fine for a 32 GiB model and actively harmful for an
+      # 84 GiB one: forcing the whole file into anonymous memory is reported
+      # to OOM at that size, and every run that worked on this box used
+      # mmap. With 512 experts, demand paging also means only the experts
+      # actually touched are ever resident — the planner measures 59.5 GiB
+      # against an 84 GiB file for exactly that reason.
       "server": >
         ${llamaPkg}/bin/llama-server
         --host 127.0.0.1 --port ''${PORT}
         --api-key "''${env.LLAMA_API_KEY}"
-        -ngl 99 -fa on --jinja --no-mmap
+        -ngl 99 -fa on --jinja
+        --threads ${toString threads}
+
+      # Same shape, different binary: the pinned build that knows qwen4exp.
+      # --fit off because the fitter sizes against the small BIOS VRAM carve
+      # rather than the 105 GiB GTT pool, and this model must not be
+      # silently trimmed.
+      "server-qwen4exp": >
+        ${qwen4expPkg}/bin/llama-server
+        --host 127.0.0.1 --port ''${PORT}
+        --api-key "''${env.LLAMA_API_KEY}"
+        -ngl 99 -fa on --jinja --fit off
         --threads ${toString threads}
 
     models:
@@ -100,22 +143,51 @@ let
           --model ${workhorseFile}
           --ctx-size ${toString workhorseCtx}
           --parallel 1
+          --no-mmap
         name: "GLM-4.7-Flash Q8_0"
         description: "Workhorse: coding, tools, ordinary turns"
         ttl: 0
 
       # The planner: asked for by name when a task needs more capacity than
-      # the workhorse has. 117B total but ~5B active, so it decodes at a
-      # usable rate despite its size. Unloads after 30 minutes idle rather
-      # than sitting on 59 GiB.
+      # the workhorse has. 177B total but ~6B active, decoding at 30-34
+      # tok/s with the MTP draft head — faster than the 120b it replaced and
+      # a much stronger model. Unloads after 30 minutes idle rather than
+      # sitting on 64 GiB.
+      #
+      # --spec-type draft-mtp is the whole point: the draft head proposes
+      # tokens and the target verifies them in one pass, which is lossless
+      # at temperature 0. Measured 2026-09-12 at 2k/8k/16k:
+      #   baseline 26/24/22 -> 34/31/30 tok/s, acceptance 100%/85%/86%.
+      # p-min 0.75 is the confidence gate the model card calls essential for
+      # prose; n-max 4 was the depth measured. Raising n-max without
+      # re-measuring acceptance is how you get a slower server.
       "planner":
         cmd: |
-          ''${server}
+          ''${server-qwen4exp}
           --model ${plannerFile}
+          --ctx-size ${toString qwen4expCtx}
+          --parallel 1
+          --spec-draft-model ${plannerDraft}
+          --spec-type draft-mtp
+          --spec-draft-n-min 2
+          --spec-draft-n-max 4
+          --spec-draft-p-min 0.75
+        name: "Qwen3.8-Flash-Next IQ4_XS + MTP"
+        description: "Planner: architecture, design, review"
+        ttl: 1800
+
+      # The previous planner, kept reachable by name so the two can be
+      # compared without editing this file. qwen4exp-build/bench-planner.sh
+      # points at whichever id you give it.
+      "planner-gptoss":
+        cmd: |
+          ''${server}
+          --model ${gptossFile}
           --ctx-size ${toString plannerCtx}
           --parallel 1
+          --no-mmap
         name: "gpt-oss-120b MXFP4"
-        description: "Planner: architecture, design, review"
+        description: "Planner (previous): architecture, design, review"
         ttl: 1800
   '';
 in
@@ -129,8 +201,16 @@ in
   users.groups.llama = { };
 
   systemd.tmpfiles.rules = [
+    # 0750 on the home too, not just models. createHome makes it 0700, which
+    # blocks traversal for llama-group members and so makes the 0750 on
+    # models below unreachable — the same shape of trap as a 0700 /home/david.
+    # Members of the llama group need to walk through here to reach the GGUFs
+    # from a benchmarking container. /var/lib/llama/env stays root:root 0600,
+    # so the API key is not exposed by this.
+    "d /var/lib/llama 0750 llama llama -"
     "d /var/lib/llama/models 0750 llama llama -"
   ];
+
 
   systemd.services.llama-swap = {
     description = "llama-swap: model routing in front of llama-server (Vulkan/RADV)";

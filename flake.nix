@@ -28,6 +28,12 @@
 
         ./configuration.nix
         ./modules/strix-halo.nix
+
+        # Provides pkgs.llama-cpp-qwen4exp, the pinned build the planner
+        # runs. Must come before llama-server.nix, which consumes it.
+        # NOTE: modules/llama-cpp-rdna-boosts.nix is deliberately NOT here —
+        # it builds a binary that emits garbage. Read its header first.
+        ./modules/llama-cpp-qwen4exp.nix
         ./modules/llama-server.nix
         ./modules/hermes.nix
         ./modules/hermes-context.nix
