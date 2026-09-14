@@ -238,6 +238,38 @@ in
     #    creation, long after `podman info` looks healthy.
     path = [ "/run/wrappers" ];
 
+    serviceConfig = {
+      # 4. NoNewPrivileges OFF. This is the one that actually blocked it, and
+      #    it is not optional: newuidmap is a SETUID binary, and NoNewPrivileges
+      #    is precisely the flag that stops a setuid binary acquiring
+      #    privileges. With it on, podman gets
+      #
+      #      running `/run/wrappers/bin/newuidmap ...`:
+      #      failed to inherit capabilities: Operation not permitted
+      #      Error: ... unable to create a new pause process
+      #
+      #    and no amount of subuid configuration helps, because the ranges are
+      #    fine and the tool that applies them is neutered.
+      #
+      #    What it costs: hermes can now execute setuid binaries. It has no
+      #    sudoers entry, so this is not a path to root — it is the difference
+      #    between "can use newuidmap/mount/ping" and "cannot". The agent
+      #    already has a terminal and arbitrary code execution as its own user;
+      #    this does not widen that meaningfully.
+      #
+      #    Beware when testing this: `sudo -u hermes` and a plain systemd-run
+      #    do NOT carry this flag, so podman succeeds under both while failing
+      #    in the real unit. Worse, once ANY invocation has created the
+      #    rootless pause process, later ones join the existing namespace
+      #    without calling newuidmap at all — so a contaminated box passes a
+      #    test it should fail. Kill the pause process first, or you are
+      #    testing nothing.
+      #    mkForce because the upstream hermes-agent module sets this to true
+      #    as part of its own hardening; without it the two definitions
+      #    conflict and evaluation fails.
+      NoNewPrivileges = lib.mkForce false;
+    };
+
     environment = {
       # 3. A runtime directory, which is where podman keeps its locks and
       #    transient state and where the user session bus lives. With

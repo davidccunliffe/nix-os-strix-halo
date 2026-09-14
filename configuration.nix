@@ -122,7 +122,20 @@
   # for ROCm vs Vulkan A/B benchmarking, without committing the host to a
   # ROCm userspace. distrobox gives the same toolbox-style workflow as on
   # Fedora.
+  # Without this, podman cannot resolve a bare image name: `podman pull alpine`
+  # fails with "short-name did not resolve to an alias and no unqualified-search
+  # registries are defined". Every docker-compose.yml in the world writes
+  # `image: nginx:alpine`, so an agent handed one is dead on arrival — and the
+  # error names /etc/containers/registries.conf, which invites it to conclude it
+  # needs root it does not have. The host already had [[registry]] blocks, which
+  # is a different setting and does not imply a search list.
+  virtualisation.containers.registries.search = [
+    "docker.io"
+    "quay.io"
+  ];
+
   virtualisation.podman = {
+
     enable = true;
     dockerCompat = true;
   };

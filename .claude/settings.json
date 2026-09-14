@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(journalctl -u *)",
+      "Bash(journalctl -b *)",
+      "Bash(systemctl is-active *)",
+      "Bash(systemctl status *)",
+      "Bash(podman images *)",
+      "Bash(podman info *)",
+      "mcp__claude_ai_Hugging_Face__hub_repo_search",
+      "mcp__claude_ai_Hugging_Face__hf_fs"
+    ]
+  }
+}
