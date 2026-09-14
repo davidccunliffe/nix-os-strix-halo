@@ -60,7 +60,12 @@
     #   '/var/lib/hermes/.hermes/.env'
     # The setgid bit on those directories keeps files created from the shell
     # group-owned by hermes, so the sharing actually works both ways.
-    extraGroups = [ "wheel" "video" "render" "hermes" ];
+    # "llama" is for benchmarking containers: /var/lib/llama/models is
+    # 0750 llama:llama, so a rootless podman container running as david
+    # cannot read the GGUFs without it. Note rootless podman drops
+    # supplementary groups unless you pass --group-add keep-groups.
+    extraGroups = [ "wheel" "video" "render" "hermes" "llama" ];
+
     # Password auth is disabled below; this key is "macbook-personal"
     # from 1Password.
     openssh.authorizedKeys.keys = [
