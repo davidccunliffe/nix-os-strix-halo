@@ -149,19 +149,15 @@ in
         provider = "openai-api";
       };
 
-      # Without this the gateway prompts "No home channel is set for Discord"
-      # on every fresh chat and waits for /sethome. /sethome writes the same
-      # thing into $HERMES_HOME state, so setting it here just states up front
-      # what the answer always was — and it survives a rebuild, which a
-      # hand-run slash command does not.
-      #
-      # This is the delivery target for cron output and for any cross-platform
-      # message that names a platform without naming a channel.
-      discord.home_channel = {
-        platform = "discord";
-        chat_id = "1540119647586619412";
-        name = "Hermes-Alerts";
-      };
+      # NOT settable here. `discord.home_channel` in this file is ignored by
+      # the gateway — it was tried, the config.yaml key rendered exactly as
+      # written, and the "No home channel is set" prompt kept appearing. The
+      # Discord plugin reads it from state.db, which only the /sethome slash
+      # command writes; there is no gateway CLI equivalent. So: run /sethome
+      # once in the channel you want. It survived from 2026-08-21 to
+      # 2026-09-14 before needing to be set again, so something clears it
+      # occasionally — if the prompt returns, re-run /sethome rather than
+      # looking for a setting here.
 
       agent = {
 
